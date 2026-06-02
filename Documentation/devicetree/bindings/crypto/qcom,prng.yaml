@@ -25,6 +25,7 @@ properties:
               - qcom,kaanapali-trng
               - qcom,milos-trng
               - qcom,nord-trng
+              - qcom,palawan-trng
               - qcom,qcs615-trng
               - qcom,qcs8300-trng
               - qcom,sa8255p-trng
