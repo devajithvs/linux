@@ -155,6 +155,14 @@ config CLK_NORD_GCC
 	  SPI, I2C, USB, SD/UFS, PCIe etc. The clock controller is a combination
 	  of GCC, SE_GCC, NE_GCC and NW_GCC.
 
+config CLK_PALAWAN_CAMCC
+	tristate "Palawan Camera Clock Controller"
+	depends on ARM64 || COMPILE_TEST
+	select CLK_PALAWAN_GCC
+	help
+	  Support for the camera clock controller on Palawan devices.
+	  Say Y if you want to support camera devices and camera functionality.
+
 config CLK_X1E80100_CAMCC
 	tristate "X1E80100 Camera Clock Controller"
 	depends on ARM64 || COMPILE_TEST
