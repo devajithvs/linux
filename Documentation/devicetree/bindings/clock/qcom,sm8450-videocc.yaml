@@ -27,6 +27,7 @@ properties:
     enum:
       - qcom,glymur-videocc
       - qcom,kaanapali-videocc
+      - qcom,palawan-videocc
       - qcom,sm8450-videocc
       - qcom,sm8475-videocc
       - qcom,sm8550-videocc
