@@ -19,6 +19,7 @@ select:
           - qcom,hawi-ufshc
           - qcom,kaanapali-ufshc
           - qcom,nord-ufshc
+          - qcom,palawan-ufshc
           - qcom,sm8650-ufshc
           - qcom,sm8750-ufshc
   required:
@@ -32,6 +33,7 @@ properties:
           - qcom,hawi-ufshc
           - qcom,kaanapali-ufshc
           - qcom,nord-ufshc
+          - qcom,palawan-ufshc
           - qcom,sm8650-ufshc
           - qcom,sm8750-ufshc
       - const: qcom,ufshc
