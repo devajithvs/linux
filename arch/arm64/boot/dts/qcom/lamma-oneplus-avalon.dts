@@ -174,3 +174,18 @@
 
 	status = "okay";
 };
+
+&tlmm {
+	/*
+	 * GPIOs 56-60 are owned by a trusted application and fault the XPU when
+	 * the OS reads their CTL registers. gpiolib reads every GPIO's direction
+	 * at gpiochip registration, so without this the TLMM probe hangs the bus
+	 * (F0015). The list is the downstream OnePlus/QCOM cliffs tlmm
+	 * qcom,gpios-reserved (android_kernel_modules_and_devicetree_oneplus_sm7675,
+	 * branch oneplus/sm7675_b_16.0.0_nord_4, commit
+	 * 150f7f8f3354dc680da90e83788bd25d9b983739,
+	 * kernel_platform/qcom/proprietary/devicetree/qcom/cliffs.dtsi:741), and
+	 * matches the shipped Avalon vendor_boot DTB's tlmm qcom,gpios-reserved.
+	 */
+	gpio-reserved-ranges = <56 5>;
+};
