@@ -26,12 +26,14 @@
 	/*
 	 * Bootloader selection properties, copied from the shipped Avalon
 	 * dtbo entry: qcom,msm-id 632 (0x278) for Lamma/Cliffs 7, board-id 8,
-	 * and the eight-byte pmic-id ending in 0x4c.
+	 * and the pmic-id of eight 32-bit cells ending in 0x4c. ABL reads
+	 * pmic-id-size as the number of u32 cells per entry and skips the
+	 * PMIC match when the property length is not a multiple of it.
 	 */
 	qcom,msm-id = <0x278 0x10000>;
 	qcom,board-id = <0x08 0x00>;
 	qcom,pmic-id-size = <8>;
-	qcom,pmic-id = /bits/ 8 <0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x4c>;
+	qcom,pmic-id = <0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x4c>;
 
 	/*
 	 * Lamma dtsi ships a placeholder memory@a0000000; this bootloader
