@@ -156,21 +156,6 @@
 	dr_mode = "peripheral";
 	maximum-speed = "high-speed";
 
-	/*
-	 * HACK: HS-only until the QMP combo PHY's DP side is understood. With the
-	 * sm8550 fallback the combo PHY probes and its DP auxiliary bridge / display
-	 * clocks stop the command-mode DSI panel's refresh (the panel freezes at
-	 * ~0.3 s, F0018). Drop the usb3-phy so dwc3 uses only the eUSB2 HS PHY
-	 * (devm_phy_get("usb3-phy") returns -ENODEV, drivers/usb/dwc3/core.c:1605),
-	 * select UTMI as the pipe clock, and keep the combo PHY disabled. This
-	 * separates "panel frozen by the DP probe" from "kernel stalled" and gives a
-	 * high-speed gadget for the kernel log. Revert once the DP/panel interaction
-	 * is fixed and SuperSpeed is wanted.
-	 */
-	phys = <&usb_1_hsphy>;
-	phy-names = "usb2-phy";
-	qcom,select-utmi-as-pipe-clk;
-
 	status = "okay";
 };
 
@@ -187,7 +172,7 @@
 	vdda-phy-supply = <&vreg_l4b_1p2>;
 	vdda-pll-supply = <&vreg_l3b_0p92>;
 
-	status = "disabled";
+	status = "okay";
 };
 
 &tlmm {
