@@ -1,0 +1,174 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * OnePlus Nord 4 (Avalon), SM7675 / Lamma.
+ *
+ * First-boot scope: serial-less simple-framebuffer console, ramoops, and the
+ * USB gadget controller in peripheral mode. Storage, charging, WLAN, the
+ * remoteprocs, display, GPU and SD are left disabled.
+ *
+ * Electrical values are from the downstream OnePlus device tree
+ * (android_kernel_modules_and_devicetree_oneplus_sm7675, branch
+ * oneplus/sm7675_b_16.0.0_nord_4, commit 150f7f8f3354dc680da90e83788bd25d9b983739),
+ * not from the QRD reference board.
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+#include "lamma.dtsi"
+#include "pm7550ba.dtsi"
+
+/ {
+	model = "OnePlus Nord 4 (Avalon)";
+	compatible = "oneplus,avalon", "qcom,lamma";
+	chassis-type = "handset";
+
+	/*
+	 * Bootloader selection properties, copied from the shipped Avalon
+	 * dtbo entry: qcom,msm-id 632 (0x278) for Lamma/Cliffs 7, board-id 8,
+	 * and the eight-byte pmic-id ending in 0x4c.
+	 */
+	qcom,msm-id = <0x278 0x10000>;
+	qcom,board-id = <0x08 0x00>;
+	qcom,pmic-id-size = <8>;
+	qcom,pmic-id = /bits/ 8 <0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x4c>;
+
+	/*
+	 * Lamma dtsi ships a placeholder memory@a0000000; this bootloader
+	 * looks up the node named exactly "memory" and rewrites its reg with
+	 * the DDR map, so the placeholder is dropped rather than left dead.
+	 */
+	/delete-node/ memory@a0000000;
+
+	/* The bootloader rewrites reg with the real DDR size. */
+	memory {
+		device_type = "memory";
+		reg = <0 0 0 0>;
+	};
+
+	aliases {
+		display0 = &framebuffer0;
+	};
+
+	chosen {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		stdout-path = "display0";
+
+		/*
+		 * The bootloader's splash buffer. Panel is 1240x2772
+		 * (dsi-panel-AA553-P-7-A0001-dsc-cmd.dtsi in the downstream
+		 * display tree); the buffer is 32 bpp, so 4960 bytes per row.
+		 */
+		framebuffer0: framebuffer@e3940000 {
+			compatible = "simple-framebuffer";
+			reg = <0 0xe3940000 0 (1240 * 2772 * 4)>;
+			width = <1240>;
+			height = <2772>;
+			stride = <(1240 * 4)>;
+			format = "a8r8g8b8";
+		};
+	};
+};
+
+&apps_rsc {
+	regulators-0 {
+		compatible = "qcom,pm7550-rpmh-regulators";
+		qcom,pmic-id = "b";
+
+		/* L2B: USB HS PHY vdd. 880000-950000 uV, init 880000. */
+		vreg_l2b_0p95: ldo2 {
+			regulator-name = "vreg_l2b_0p95";
+			regulator-min-microvolt = <880000>;
+			regulator-max-microvolt = <950000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* L3B: USB3-DP PHY vdda-pll. 880000-920000 uV. */
+		vreg_l3b_0p92: ldo3 {
+			regulator-name = "vreg_l3b_0p92";
+			regulator-min-microvolt = <880000>;
+			regulator-max-microvolt = <920000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* L4B: USB HS PHY vdda12 and USB3-DP PHY vdda-phy. 1.2 V. */
+		vreg_l4b_1p2: ldo4 {
+			regulator-name = "vreg_l4b_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* L7B: eUSB2 repeater vdd18. 1.8 V. */
+		vreg_l7b_1p8: ldo7 {
+			regulator-name = "vreg_l7b_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* L17B: eUSB2 repeater vdd3. 2700000-3300000 uV, init 3104000. */
+		vreg_l17b_3p3: ldo17 {
+			regulator-name = "vreg_l17b_3p3";
+			regulator-min-microvolt = <2700000>;
+			regulator-max-microvolt = <3300000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+	};
+};
+
+&pm7550ba_eusb2_repeater {
+	vdd3-supply = <&vreg_l17b_3p3>;
+	vdd18-supply = <&vreg_l7b_1p8>;
+};
+
+&reserved_memory {
+	/*
+	 * The bootloader splash carveout, same base and size as the shipped
+	 * Avalon dtbo. The downstream display node is named splash_region;
+	 * ABL powers the display down if it is not.
+	 */
+	splash_region: splash_region@e3940000 {
+		reg = <0 0xe3940000 0 0x2b00000>;
+		no-map;
+	};
+
+	/*
+	 * First free range above the splash carveout: [0xe1d40000, 0xf3800000)
+	 * is reserved by neither the stock 1001 base DTB nor the Avalon dtbo.
+	 * Size and buffer split are the downstream ramoops_region values.
+	 */
+	ramoops@e6440000 {
+		compatible = "ramoops";
+		reg = <0 0xe6440000 0 0x240000>;
+		console-size = <0x40000>;
+		pmsg-size = <0x200000>;
+		mem-type = <2>;
+	};
+};
+
+&usb_1 {
+	dr_mode = "peripheral";
+	maximum-speed = "high-speed";
+
+	status = "okay";
+};
+
+&usb_1_hsphy {
+	vdd-supply = <&vreg_l2b_0p95>;
+	vdda12-supply = <&vreg_l4b_1p2>;
+
+	phys = <&pm7550ba_eusb2_repeater>;
+
+	status = "okay";
+};
+
+&usb_dp_qmpphy {
+	vdda-phy-supply = <&vreg_l4b_1p2>;
+	vdda-pll-supply = <&vreg_l3b_0p92>;
+
+	status = "okay";
+};
