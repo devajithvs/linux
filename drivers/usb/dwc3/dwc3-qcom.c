@@ -618,6 +618,17 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 	bool			ignore_pipe_clk;
 	bool			wakeup_source;
 
+	/*
+	 * HACK: the deferred-probe flush runs before /init, and this probe is
+	 * where the panel console stops (F0020). Defer it until userspace runs so
+	 * the initramfs can report the USB state to the panel first and then bind
+	 * the driver from sysfs. Temporary: drop once the stopping step is fixed.
+	 */
+	if (system_state < SYSTEM_RUNNING) {
+		dev_info(dev, "nord4-usb: probe deferred to /init\n");
+		return -EPROBE_DEFER;
+	}
+
 	qcom = devm_kzalloc(&pdev->dev, sizeof(*qcom), GFP_KERNEL);
 	if (!qcom)
 		return -ENOMEM;
