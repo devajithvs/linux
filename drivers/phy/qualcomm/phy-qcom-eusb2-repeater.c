@@ -150,10 +150,12 @@ static int eusb2_repeater_init(struct phy *phy)
 	int i;
 	u8 val;
 
+	dev_info(rptr->dev, "nord4-rptr: enable vdd18/vdd3\n");
 	ret = regulator_bulk_enable(rptr->cfg->num_vregs, rptr->vregs);
 	if (ret)
 		return ret;
 
+	dev_info(rptr->dev, "nord4-rptr: EN_CTL1 + init table\n");
 	regmap_write(regmap, base + EUSB2_EN_CTL1, EUSB2_RPTR_EN);
 
 	/* Write registers from init table */
@@ -183,6 +185,7 @@ static int eusb2_repeater_init(struct phy *phy)
 		}
 	}
 
+	dev_info(rptr->dev, "nord4-rptr: poll RPTR_OK\n");
 	/* Wait for status OK */
 	ret = regmap_read_poll_timeout(regmap, base + EUSB2_RPTR_STATUS, poll_val,
 				       poll_val & RPTR_OK, 10, 5);

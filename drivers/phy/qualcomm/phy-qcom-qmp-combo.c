@@ -3669,12 +3669,14 @@ static int qmp_combo_com_init(struct qmp_combo *qmp, bool force)
 	if (!force && qmp->init_count++)
 		return 0;
 
+	dev_info(qmp->dev, "nord4-qmp: com init: enable regulators\n");
 	ret = regulator_bulk_enable(cfg->num_vregs, qmp->vregs);
 	if (ret) {
 		dev_err(qmp->dev, "failed to enable regulators, err=%d\n", ret);
 		goto err_decrement_count;
 	}
 
+	dev_info(qmp->dev, "nord4-qmp: com init: assert resets\n");
 	ret = reset_control_bulk_assert(cfg->num_resets, qmp->resets);
 	if (ret) {
 		dev_err(qmp->dev, "reset assert failed\n");
@@ -3687,6 +3689,7 @@ static int qmp_combo_com_init(struct qmp_combo *qmp, bool force)
 		goto err_disable_regulators;
 	}
 
+	dev_info(qmp->dev, "nord4-qmp: com init: enable clocks\n");
 	ret = clk_bulk_prepare_enable(qmp->num_clks, qmp->clks);
 	if (ret)
 		goto err_assert_reset;
@@ -3879,6 +3882,7 @@ static int qmp_combo_usb_power_on(struct phy *phy)
 	unsigned int val;
 	int ret;
 
+	dev_info(qmp->dev, "nord4-qmp: usb power on: serdes tables\n");
 	qmp_configure(qmp->dev, serdes, cfg->serdes_tbl, cfg->serdes_tbl_num);
 
 	/* Tx, Rx, and PCS configurations */
@@ -3899,6 +3903,7 @@ static int qmp_combo_usb_power_on(struct phy *phy)
 	if (cfg->has_pwrdn_delay)
 		usleep_range(10, 20);
 
+	dev_info(qmp->dev, "nord4-qmp: usb power on: pcs reset\n");
 	/* Pull PHY out of reset state */
 	qphy_clrbits(pcs, cfg->regs[QPHY_SW_RESET], SW_RESET);
 
@@ -4866,10 +4871,12 @@ static int qmp_combo_probe(struct platform_device *pdev)
 
 	mutex_init(&qmp->phy_mutex);
 
+	dev_info(dev, "nord4-qmp: get resets\n");
 	ret = qmp_combo_reset_init(qmp);
 	if (ret)
 		return ret;
 
+	dev_info(dev, "nord4-qmp: get regulators\n");
 	ret = devm_regulator_bulk_get_const(dev, qmp->cfg->num_vregs,
 					qmp->cfg->vreg_list, &qmp->vregs);
 	if (ret)
@@ -4884,11 +4891,13 @@ static int qmp_combo_probe(struct platform_device *pdev)
 			return -EINVAL;
 		}
 
+		dev_info(dev, "nord4-qmp: parse legacy dt\n");
 		ret = qmp_combo_parse_dt_legacy(qmp, usb_np, dp_np);
 	} else {
 		usb_np = of_node_get(dev->of_node);
 		dp_np = of_node_get(dev->of_node);
 
+		dev_info(dev, "nord4-qmp: parse dt (iomap, clocks)\n");
 		ret = qmp_combo_parse_dt(qmp);
 	}
 	if (ret)
@@ -4896,6 +4905,7 @@ static int qmp_combo_probe(struct platform_device *pdev)
 
 	qmp->qmpphy_mode = QMPPHY_MODE_USB3DP;
 
+	dev_info(dev, "nord4-qmp: typec mode/orientation\n");
 	if (of_property_present(dev->of_node, "mode-switch") ||
 	    of_property_present(dev->of_node, "orientation-switch")) {
 		ret = qmp_combo_typec_register(qmp);
@@ -4930,10 +4940,12 @@ static int qmp_combo_probe(struct platform_device *pdev)
 		}
 	}
 
+	dev_info(dev, "nord4-qmp: aux bridge\n");
 	ret = drm_aux_bridge_register(dev);
 	if (ret)
 		goto err_node_put;
 
+	dev_info(dev, "nord4-qmp: pm runtime (gdsc attach)\n");
 	pm_runtime_set_active(dev);
 	ret = devm_pm_runtime_enable(dev);
 	if (ret)
@@ -4944,11 +4956,13 @@ static int qmp_combo_probe(struct platform_device *pdev)
 	 */
 	pm_runtime_forbid(dev);
 
+	dev_info(dev, "nord4-qmp: register clocks\n");
 	ret = qmp_combo_register_clocks(qmp, usb_np, dp_np);
 	if (ret)
 		goto err_node_put;
 
 
+	dev_info(dev, "nord4-qmp: phy create\n");
 	qmp->usb_phy = devm_phy_create(dev, usb_np, &qmp_combo_usb_phy_ops);
 	if (IS_ERR(qmp->usb_phy)) {
 		ret = PTR_ERR(qmp->usb_phy);
@@ -4972,6 +4986,7 @@ static int qmp_combo_probe(struct platform_device *pdev)
 	else
 		phy_provider = devm_of_phy_provider_register(dev, of_phy_simple_xlate);
 
+	dev_info(dev, "nord4-qmp: provider register\n");
 	of_node_put(usb_np);
 	of_node_put(dp_np);
 
