@@ -326,6 +326,8 @@ struct qcom_battmgr {
 
 	bool service_up;
 
+	enum power_supply_charge_behaviour charge_behaviour;
+
 	struct qcom_battmgr_info info;
 	struct qcom_battmgr_status status;
 	struct qcom_battmgr_ac ac;
@@ -519,6 +521,15 @@ static int qcom_battmgr_bat_get_property(struct power_supply *psy,
 
 	if (!battmgr->service_up)
 		return -EAGAIN;
+
+	/*
+	 * The OPPO firmware's charge enable is write-only (property 24), so
+	 * report the value its last write accepted rather than a readback.
+	 */
+	if (psp == POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR) {
+		val->intval = battmgr->charge_behaviour;
+		return 0;
+	}
 
 	if (battmgr->variant == QCOM_BATTMGR_SC8280XP ||
 	    battmgr->variant == QCOM_BATTMGR_X1E80100)
@@ -796,6 +807,54 @@ static int qcom_battmgr_bat_set_property(struct power_supply *psy,
 	return 0;
 }
 
+static int qcom_battmgr_bat_oplus_is_writeable(struct power_supply *psy,
+					       enum power_supply_property psp)
+{
+	return psp == POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR;
+}
+
+static int qcom_battmgr_bat_oplus_set_property(struct power_supply *psy,
+					       enum power_supply_property psp,
+					       const union power_supply_propval *pval)
+{
+	struct qcom_battmgr *battmgr = power_supply_get_drvdata(psy);
+	u32 enable;
+	int ret;
+
+	if (psp != POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR)
+		return -EINVAL;
+
+	if (!battmgr->service_up)
+		return -EAGAIN;
+
+	switch (pval->intval) {
+	case POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO:
+		enable = 1;
+		break;
+	case POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE:
+		enable = 0;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	/*
+	 * BATT_CHG_EN is battery property 24, written through the battery
+	 * status set opcode; 0 stops charging and 1 resumes it
+	 * (oplus_hal_adsp.c:7864-7877).
+	 */
+	mutex_lock(&battmgr->lock);
+	ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_SET,
+					    BATT_CHG_CTRL_EN, enable);
+	mutex_unlock(&battmgr->lock);
+	if (ret)
+		return ret;
+
+	battmgr->charge_behaviour = pval->intval;
+
+	return 0;
+}
+
 static const enum power_supply_property sc8280xp_bat_props[] = {
 	POWER_SUPPLY_PROP_STATUS,
 	POWER_SUPPLY_PROP_PRESENT,
@@ -940,10 +999,9 @@ static const struct power_supply_desc sm8550_bat_psy_desc = {
  * enable and its PDO/QC setters (oplus_hal_adsp.h:249-323) instead of
  * mainline's charge-control thresholds, and its 0x48 opcode is the AP-bound
  * BC_VOOC_STATUS_GET notification rather than a charge-control request
- * (oplus_hal_adsp.c:3407-3410). Neither the threshold attributes nor a
- * property >= 24 may be used with that firmware, so the variant exposes the
- * battery readout only and registers no setter: the attributes are read-only
- * and a direct set returns -ENODEV (power_supply_core.c).
+ * (oplus_hal_adsp.c:3407-3410). The two threshold attributes stay absent; the
+ * only charge control exposed is charge_behaviour, backed by BATT_CHG_EN
+ * (property 24) through 0x31: inhibit-charge writes 0 and auto writes 1.
  */
 static const enum power_supply_property sm8550_oplus_bat_props[] = {
 	POWER_SUPPLY_PROP_STATUS,
@@ -967,14 +1025,19 @@ static const enum power_supply_property sm8550_oplus_bat_props[] = {
 	POWER_SUPPLY_PROP_INTERNAL_RESISTANCE,
 	POWER_SUPPLY_PROP_STATE_OF_HEALTH,
 	POWER_SUPPLY_PROP_POWER_NOW,
+	POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR,
 };
 
 static const struct power_supply_desc sm8550_oplus_bat_psy_desc = {
 	.name = "qcom-battmgr-bat",
 	.type = POWER_SUPPLY_TYPE_BATTERY,
+	.charge_behaviours = BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO) |
+			     BIT(POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE),
 	.properties = sm8550_oplus_bat_props,
 	.num_properties = ARRAY_SIZE(sm8550_oplus_bat_props),
 	.get_property = qcom_battmgr_bat_get_property,
+	.set_property = qcom_battmgr_bat_oplus_set_property,
+	.property_is_writeable = qcom_battmgr_bat_oplus_is_writeable,
 };
 
 static int qcom_battmgr_ac_get_property(struct power_supply *psy,
@@ -1525,6 +1588,19 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
 			dev_warn(battmgr->dev, "unknown property %#x\n", property);
 			break;
 		}
+		break;
+	case BATTMGR_BAT_PROPERTY_SET:
+		if (payload_len != sizeof(resp->intval)) {
+			dev_warn(battmgr->dev,
+				 "invalid payload length for %#x request: %zd\n",
+				 le32_to_cpu(resp->intval.property), payload_len);
+			battmgr->error = -ENODATA;
+			return;
+		}
+
+		battmgr->error = le32_to_cpu(resp->intval.result);
+		if (battmgr->error)
+			goto out_complete;
 		break;
 	case BATTMGR_USB_PROPERTY_GET:
 		property = le32_to_cpu(resp->intval.property);
