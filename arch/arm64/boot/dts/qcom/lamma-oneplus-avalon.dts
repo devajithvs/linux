@@ -21,6 +21,7 @@
 #include "lamma.dtsi"
 #include "pm7550ba.dtsi"
 #include "pmr735a.dtsi"
+#include "pmk8550.dtsi"
 
 / {
 	model = "OnePlus Nord 4 (Avalon)";
