@@ -770,3 +770,31 @@
 &pmk8550_rtc {
 	allow-set-time;
 };
+
+/*
+ * The WCN6750's PMU takes its low-frequency sleep clock from PMK8550 GPIO5,
+ * which the PMIC drives in "func1" mode (the alternate sleep clock output).
+ * Without it the WPSS firmware asserts as soon as the first vdev is created,
+ * in its WMAC transition: "cmnos_assert.c:400:Asserted in
+ * whal_wmac_recipes.c:whal_wmac_transition_to_fw_control:1734", and the
+ * interface never comes up. The phone's own DT carries exactly this node on
+ * this pin (the stock volcano DTB's pmk8550 pinctrl@b800: pins "gpio5",
+ * function "func1", input-disable, output-enable, bias-disable,
+ * power-source 0), and the same fix with a different pin is what the
+ * upstream WCN6755 bring-up needed for the identical assert.
+ */
+&pmk8550_gpios {
+	pinctrl-0 = <&alt_sleep_clk_default>;
+	pinctrl-names = "default";
+
+	alt_sleep_clk {
+		alt_sleep_clk_default: alt_sleep_clk_default {
+			pins = "gpio5";
+			function = "func1";
+			input-disable;
+			output-enable;
+			bias-disable;
+			power-source = <0>;
+		};
+	};
+};
