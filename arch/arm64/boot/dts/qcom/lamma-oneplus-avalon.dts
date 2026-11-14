@@ -2,13 +2,13 @@
 /*
  * OnePlus Nord 4 (Avalon), SM7675 / Lamma.
  *
- * Scope: serial-less simple-framebuffer console, ramoops, the USB controller
- * with its Type-C role switch (device by default), the ADSP/PMIC GLINK
- * battery path, the WCN6750 Wi-Fi and Bluetooth path over the WPSS remoteproc,
- * the Adreno 732 GPU, and the power and volume keys. Display and SD stay
+ * Scope: the display subsystem and its AA553-P-7-A0001 panel, ramoops, the USB
+ * controller with its Type-C role switch (device by default), the ADSP/PMIC
+ * GLINK battery path, the WCN6750 Wi-Fi and Bluetooth path over the WPSS
+ * remoteproc, the Adreno 732 GPU, and the power and volume keys. SD stays
  * disabled. The battery readout, the Wi-Fi interface and the GPU probe have
- * been exercised on hardware; the charge-ceiling write, a Wi-Fi scan and the
- * USB host role have not.
+ * been exercised on hardware; the charge-ceiling write, a Wi-Fi scan, the USB
+ * host role and the panel have not.
  *
  * Electrical values are from the downstream OnePlus device tree
  * (android_kernel_modules_and_devicetree_oneplus_sm7675, branch
@@ -85,7 +85,6 @@
 	};
 
 	aliases {
-		display0 = &framebuffer0;
 		/*
 		 * The Bluetooth UART, uart10, is neither the console nor a
 		 * serial port, so it gets no "serial" alias. qcom_geni_serial
@@ -97,47 +96,6 @@
 		 * hsuart0 = &qupv3_se10_4uart (cliffs.dtsi:48-53).
 		 */
 		hsuart0 = &uart10;
-	};
-
-	chosen {
-		#address-cells = <2>;
-		#size-cells = <2>;
-		ranges;
-
-		stdout-path = "display0";
-
-		/*
-		 * The bootloader's splash buffer. Panel is 1240x2772
-		 * (dsi-panel-AA553-P-7-A0001-dsc-cmd.dtsi in the downstream
-		 * display tree); the buffer is 32 bpp, so 4960 bytes per row.
-		 */
-		framebuffer0: framebuffer@e3940000 {
-			compatible = "simple-framebuffer";
-			reg = <0 0xe3940000 0 (1240 * 2772 * 4)>;
-			width = <1240>;
-			height = <2772>;
-			stride = <(1240 * 4)>;
-			format = "a8r8g8b8";
-
-			/*
-			 * The panel is the bootloader's splash and this framebuffer is
-			 * its only console, so hold the display's RPMh domain. Without
-			 * a client, rpmhpd_sync_state() aggregates corner 0 for every
-			 * domain nobody enabled (drivers/pmdomain/qcom/rpmhpd.c:1213-1238)
-			 * and the command-mode panel stops refreshing at
-			 * of_platform_sync_state_init() (F0023). A power-domains entry
-			 * powers the domain on in genpd_dev_pm_attach()
-			 * (drivers/pmdomain/core.c:3407-3415), and the sync then keeps
-			 * it at its enable corner. MMCX is the display's rail: the
-			 * downstream display tree declares it as mmcx-supply
-			 * (<&VDD_MMCX_LEVEL>, android_kernel_modules_and_devicetree_oneplus_sm7675,
-			 * oneplus/sm7675_b_16.0.0_nord_4, 150f7f8f3354,
-			 * vendor/qcom/proprietary/display-devicetree/display/cliffs-sde.dtsi:229),
-			 * and upstream gives the display clock controller the same one
-			 * (palawan.dtsi:3742). Drop with the display bring-up.
-			 */
-			power-domains = <&rpmhpd RPMHPD_MMCX>;
-		};
 	};
 
 	/*
@@ -257,6 +215,20 @@
 		};
 
 		/*
+		 * L8B: panel vddio. 1.8 V, 220 mA proxy consumer
+		 * (downstream qcom/cliffs-regulators.dtsi:520-530); the panel's
+		 * supply entry asks for the same 1.8 V, enabled 2 ms before vci
+		 * (vendor/qcom/proprietary/display-devicetree/oplus/
+		 * audi-23803-display-cliffs-overlay.dtsi:21-29).
+		 */
+		vreg_l8b_1p8: ldo8 {
+			regulator-name = "vreg_l8b_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/*
 		 * L12B: UFS vcc. The PON sets 2.4 V or 2.96 V by UFS mode, so the
 		 * downstream node has no min/max (qcom/cliffs-regulators.dtsi:602-616).
 		 */
@@ -270,6 +242,20 @@
 			regulator-name = "vreg_l17b_3p3";
 			regulator-min-microvolt = <2700000>;
 			regulator-max-microvolt = <3300000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/*
+		 * L19B: panel vci. The rail runs 2.6-3.544 V
+		 * (downstream qcom/cliffs-regulators.dtsi:727-737) and the panel's
+		 * supply entry fixes it at 3.0 V, enabled 15 ms before the reset
+		 * sequence (vendor/qcom/proprietary/display-devicetree/oplus/
+		 * audi-23803-display-cliffs-overlay.dtsi:32-43).
+		 */
+		vreg_l19b_3p0: ldo19 {
+			regulator-name = "vreg_l19b_3p0";
+			regulator-min-microvolt = <3000000>;
+			regulator-max-microvolt = <3000000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 
@@ -568,20 +554,51 @@
 };
 
 /*
- * HACK: the panel is the bootloader's splash, displayed by simplefb, until the
- * MSM DRM driver and a panel driver exist (display, GPU and the rest stay
- * disabled at the top of this file). Enabling dispcc lets its probe stop the
- * display: disp_cc_sm8550_probe() configures both Lucid OLE PLLs
- * unconditionally (drivers/clk/qcom/dispcc-sm8550.c:1817-1818), and
- * clk_lucid_ole_pll_configure() disables the PLL output before reprogramming it
- * (drivers/clk/qcom/clk-alpha-pll.c:2391), so the MDP/DSI clock sources the
- * bootloader left running stop; it also turns on MDP clock gating
- * (dispcc-sm8550.c:1821). The panel freezes at the dispcc probe, one deferred
- * retry after the QMP PHY registers the DP clocks dispcc waits for (F0022).
- * Re-enable with the display bring-up.
+ * Display. The Palawan MDSS, DPU, DSI0 and DSI0 PHY nodes that palawan.dtsi
+ * leaves disabled are on here, and the panel hangs off DSI0. The rails are
+ * the downstream display tree's: vdda 1.2 V on L4B for the DSI controller
+ * (vendor/qcom/proprietary/display-devicetree/display/cliffs-sde.dtsi:272-274),
+ * and the panel's vddio and vci above. dispcc is no longer disabled: with a
+ * panel driver its probe no longer stops the bootloader's splash, because
+ * nothing depends on the bootloader's clock state any more.
  */
-&dispcc {
-	status = "disabled";
+&mdss {
+	status = "okay";
+};
+
+&mdss_dsi0 {
+	vdda-supply = <&vreg_l4b_1p2>;
+
+	status = "okay";
+
+	panel@0 {
+		compatible = "oneplus,aa553-p-7-a0001";
+		reg = <0>;
+
+		vddio-supply = <&vreg_l8b_1p8>;
+		vci-supply = <&vreg_l19b_3p0>;
+
+		reset-gpios = <&tlmm 79 GPIO_ACTIVE_LOW>;
+
+		pinctrl-names = "default", "sleep";
+		pinctrl-0 = <&disp0_reset_n_active>, <&mdp_vsync>;
+		pinctrl-1 = <&disp0_reset_n_suspend>, <&mdp_vsync>;
+
+		port {
+			panel0_in: endpoint {
+				remote-endpoint = <&mdss_dsi0_out>;
+			};
+		};
+	};
+};
+
+&mdss_dsi0_out {
+	remote-endpoint = <&panel0_in>;
+	data-lanes = <0 1 2 3>;
+};
+
+&mdss_dsi0_phy {
+	status = "okay";
 };
 
 /*
@@ -629,6 +646,34 @@
 	 * matches the shipped Avalon vendor_boot DTB's tlmm qcom,gpios-reserved.
 	 */
 	gpio-reserved-ranges = <56 5>;
+
+	/*
+	 * Panel reset and tear input. Drive strengths and biases are the
+	 * downstream ones (vendor/qcom/proprietary/display-devicetree/display/
+	 * cliffs-sde-display-pinctrl.dtsi:3-70); the tear pin's downstream
+	 * function name mdp_vsync_p is mdp_vsync in this tree
+	 * (drivers/pinctrl/qcom/pinctrl-palawan.c:797-799).
+	 */
+	disp0_reset_n_active: disp0-reset-n-active-state {
+		pins = "gpio79";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	disp0_reset_n_suspend: disp0-reset-n-suspend-state {
+		pins = "gpio79";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	mdp_vsync: mdp-vsync-state {
+		pins = "gpio77";
+		function = "mdp_vsync";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
 
 	/*
 	 * BT_EN: 2 mA, output low with a pull-down, so the chip stays off until
