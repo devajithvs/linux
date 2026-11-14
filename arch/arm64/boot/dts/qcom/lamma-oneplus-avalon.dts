@@ -3,16 +3,11 @@
  * OnePlus Nord 4 (Avalon), SM7675 / Lamma.
  *
  * Scope: serial-less simple-framebuffer console, ramoops, the USB gadget
-<<<<<<< HEAD
- * controller in peripheral mode, the ADSP/PMIC GLINK battery path, and the
- * WCN6750 Wi-Fi path over the WPSS remoteproc. Display, GPU and SD stay
- * disabled. The battery readout and the Wi-Fi interface have been exercised
- * on hardware; the charge-ceiling write and a Wi-Fi scan have not.
-=======
- * controller in peripheral mode, and the WCN6750 Wi-Fi and Bluetooth path
- * over the WPSS remoteproc. Charging, display, GPU and SD stay disabled; the
- * WLAN and BT path has not been tested on hardware.
->>>>>>> 31e94195c043 (arm64: dts: qcom: avalon: add the WCN6750 Bluetooth node)
+ * controller in peripheral mode, the ADSP/PMIC GLINK battery path, the
+ * WCN6750 Wi-Fi and Bluetooth path over the WPSS remoteproc, and the
+ * Adreno 732 GPU. Display and SD stay disabled. The battery readout, the
+ * Wi-Fi interface and the GPU probe have been exercised on hardware; the
+ * charge-ceiling write and a Wi-Fi scan have not.
  *
  * Electrical values are from the downstream OnePlus device tree
  * (android_kernel_modules_and_devicetree_oneplus_sm7675, branch
@@ -496,6 +491,26 @@
  */
 &gpu_zap_shader {
 	firmware-name = "qcom/lamma/gen71100_zap.mbn";
+};
+
+/*
+ * The GPU is an Adreno 732. Downstream's cliffs7-gpu.dtsi overrides
+ * qcom,gpu-model to "Adreno732" on top of cliffs-gpu.dtsi, which states the
+ * gen7-11-0 compatible, chipid 0x43030b00 and the 3d00000/3d50000/3d61000/
+ * 3d9e000 register windows (graphics-devicetree/gpu/cliffs-gpu.dtsi:4-19 and
+ * cliffs7-gpu.dtsi:1-5). The mainline catalog maps that chip id to the a7xx
+ * gen2 family and the gen71100 firmware set
+ * (drivers/gpu/drm/msm/adreno/a6xx_catalog.c:1617-1628), and Lamma selects the
+ * matching GMU variant (arch/arm64/boot/dts/qcom/lamma.dtsi:70-72).
+ *
+ * The rest of the path is already described in the SoC tree: the GPUCC with its
+ * CX and GX power domains, the Adreno SMMU, the GMU node with its rscc window,
+ * the gfx-mem interconnect, the OPP table and the zap-shader carveout
+ * (palawan.dtsi:2354-2395, 2454-2517 and 2520-2560). The board only turns the
+ * GPU node on.
+ */
+&gpu {
+	status = "okay";
 };
 
 &tlmm {
