@@ -541,6 +541,91 @@
 		output-low;
 		bias-pull-down;
 	};
+
+	/*
+	 * MI2S1 carries the speaker amplifiers: the downstream audio overlay
+	 * feeds both TFA98xx amps from I2S1 (oplus,speaker-i2s-id = <1>,
+	 * avalon-24211-audio-cliffs-overlay.dtsi:119-120) and its pinctrl group
+	 * takes the i2s1_* states (same file:65-76). The mux, sleep config and
+	 * 8 mA active drive come from the downstream TLMM state definitions
+	 * (qcom/cliffs-pinctrl.dtsi:1845-1856, 1874-1885, 1903-1914,
+	 * 1932-1943), except the active SCK drive strength: the Avalon overlay
+	 * lowers it to 4 mA (avalon-24211-audio-cliffs-overlay.dtsi:125-129).
+	 * The downstream sleep config also sets input-enable; the upstream
+	 * state schema rejects that property (qcom,tlmm-common.yaml:84), so the
+	 * pull-down alone leaves the line an input.
+	 */
+	i2s1_sck_active: i2s1-sck-active-state {
+		sck-pins {
+			pins = "gpio123";
+			function = "i2s1_sck";
+			drive-strength = <4>;
+			bias-disable;
+		};
+	};
+
+	i2s1_sck_sleep: i2s1-sck-sleep-state {
+		sck-pins {
+			pins = "gpio123";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+	};
+
+	i2s1_ws_active: i2s1-ws-active-state {
+		ws-pins {
+			pins = "gpio125";
+			function = "i2s1_ws";
+			drive-strength = <8>;
+			bias-disable;
+		};
+	};
+
+	i2s1_ws_sleep: i2s1-ws-sleep-state {
+		ws-pins {
+			pins = "gpio125";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+	};
+
+	i2s1_sd0_active: i2s1-sd0-active-state {
+		sd0-pins {
+			pins = "gpio124";
+			function = "i2s1_data0";
+			drive-strength = <8>;
+			bias-disable;
+		};
+	};
+
+	i2s1_sd0_sleep: i2s1-sd0-sleep-state {
+		sd0-pins {
+			pins = "gpio124";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+	};
+
+	i2s1_sd1_active: i2s1-sd1-active-state {
+		sd1-pins {
+			pins = "gpio126";
+			function = "i2s1_data1";
+			drive-strength = <8>;
+			bias-disable;
+		};
+	};
+
+	i2s1_sd1_sleep: i2s1-sd1-sleep-state {
+		sd1-pins {
+			pins = "gpio126";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+	};
 };
 
 /*
