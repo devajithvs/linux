@@ -566,6 +566,42 @@
 };
 
 /*
+ * The CDSP, the compute DSP behind the Hexagon HTP and the FastRPC channels.
+ *
+ * The SoC tree already carries the remoteproc, its GLINK edge and ten FastRPC
+ * compute contexts, copied from SM8650 and disabled. Every field was checked
+ * against the phone's own descriptions before this board turns the node on:
+ *
+ * - Downstream's node has the same base 0x32300000 and length, wdog GIC_SPI
+ *   578, xo clock, cx/mxc/nsp power domains, aoss_qmp, remote-pid 5, the
+ *   "stop" smem state, and the same smp2p indices under the interrupt names
+ *   fatal/ready/handover/stop-ack (kernel_platform/qcom/proprietary/
+ *   devicetree/qcom/cliffs.dtsi:1876-1968).
+ * - The carveouts are downstream's: cdsp_mem 0x99900000 + 0x1400000 and
+ *   q6_cdsp_dtb_mem 0x9ad00000 + 0x80000, with a third memory-region for the
+ *   global sync region that the SM8650 PAS data assigns to the CDSP
+ *   (cliffs-reserved-memory.dtsi:94-100, 150-157).
+ * - The FastRPC contexts use stream IDs 0xc01-0xc08 and 0xc0c-0xc0e with
+ *   stream-ID mask 0, which is what the phone's shipped Cliffs 7
+ *   vendor_boot DTB carries (qcom,msm_fastrpc, label "cdsprpc-smd"); the
+ *   downstream source tree has no compute-context node for this SoC, so the
+ *   shipped DTB is the hardware description here.
+ * - The platform data the fork maps palawan-cdsp-pas to (pas_id 18,
+ *   dtb_pas_id 0x25, minidump 7, crash_reason_smem 601, ssctl 0x17, sysmon
+ *   "cdsp", cdsp.mdt and cdsp_dtb.mdt) is downstream's cliffs_cdsp_resource
+ *   field for field (OnePlusOSS android_kernel_oneplus_sm7675, branch
+ *   oneplus/sm7675_b_16.0.0_nord_4, drivers/remoteproc/qcom_q6v5_pas.c:
+ *   2541-2555; devicetree commit 150f7f8f3354dc680da90e83788bd25d9b983739).
+ *
+ * The firmware is not part of this tree: a test initramfs stages cdsp.mdt, its
+ * .bNN segments and cdsp_dtb.mdt from the phone's own firmware_mnt image for
+ * request_firmware(), and nothing here redistributes it.
+ */
+&remoteproc_cdsp {
+	status = "okay";
+};
+
+/*
  * The sm8550-compatible PMIC GLINK client creates qcom_battmgr's battery,
  * USB and wireless power supplies. The downstream qcom,battery-charger child is
  * proprietary and has no mainline binding; do not copy it.
