@@ -605,9 +605,16 @@
  * The sm8550-compatible PMIC GLINK client creates qcom_battmgr's battery,
  * USB and wireless power supplies. The downstream qcom,battery-charger child is
  * proprietary and has no mainline binding; do not copy it.
+ *
+ * The board's own compatible selects qcom_battmgr's OPPO/OnePlus variant: that
+ * firmware defines battery property ids 24-26 and the 0x48 opcode differently
+ * (oplus_hal_adsp.h:249-323, oplus_hal_adsp.c:3407-3410), so the driver exposes
+ * the readout only and registers no charge-control setter on this board.
  */
 / {
 	pmic-glink {
-		compatible = "qcom,sm8550-pmic-glink", "qcom,pmic-glink";
+		compatible = "qcom,avalon-pmic-glink",
+			     "qcom,sm8550-pmic-glink",
+			     "qcom,pmic-glink";
 	};
 };
