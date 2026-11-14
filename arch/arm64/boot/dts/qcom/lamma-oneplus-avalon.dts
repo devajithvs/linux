@@ -240,6 +240,18 @@
 			regulator-max-microvolt = <3300000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
+
+		/*
+		 * L22B: touch vdd. 2700000-3400000 uV, init 2700000 (downstream
+		 * qcom/cliffs-regulators.dtsi:781-798). The touch controller's
+		 * driver raises it to 3.1 V itself.
+		 */
+		vreg_l22b: ldo22 {
+			regulator-name = "vreg_l22b";
+			regulator-min-microvolt = <2700000>;
+			regulator-max-microvolt = <3400000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
 	};
 
 	/*
@@ -685,6 +697,20 @@
 			bias-pull-down;
 		};
 	};
+
+	ts_int_default: ts-int-default-state {
+		pins = "gpio129";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	ts_reset_default: ts-reset-default-state {
+		pins = "gpio128";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+	};
 };
 
 /*
@@ -934,5 +960,33 @@
 		function-enumerator = <1>;
 		led-sources = <3>, <4>;
 		led-max-microamp = <50000>;
+	};
+};
+
+/*
+ * Touch. The S3910 sits on qupv3_se4_spi (chip select 0) at 19 MHz, with a
+ * level-low interrupt on TLMM 129, an active-low reset on TLMM 128 and its
+ * analog rail on L22B; the values are the downstream Avalon touch node
+ * (kernel_platform/qcom/proprietary/devicetree/oplus/tp/avalon-oplus-tp-24211.dtsi:247-286).
+ * It runs its own firmware and speaks TouchComm v1, so no firmware download
+ * is needed from the host.
+ */
+&spi4 {
+	status = "okay";
+
+	touchscreen@0 {
+		compatible = "syna,s3910";
+		reg = <0>;
+
+		spi-max-frequency = <19000000>;
+
+		interrupt-parent = <&tlmm>;
+		interrupts = <129 IRQ_TYPE_LEVEL_LOW>;
+
+		reset-gpios = <&tlmm 128 GPIO_ACTIVE_LOW>;
+		vdd-supply = <&vreg_l22b>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&ts_int_default>, <&ts_reset_default>;
 	};
 };
