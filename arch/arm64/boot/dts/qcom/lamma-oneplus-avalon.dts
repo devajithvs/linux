@@ -618,3 +618,32 @@
 			     "qcom,pmic-glink";
 	};
 };
+
+/*
+ * The pack gauge. Stock's battery power supply is the external bq27541 at I2C
+ * address 0x55 on qupv3_se12_i2c at 100 kHz (oplus-chg-24211.dtsi:942-963),
+ * not the ADSP's own battery object. qupv3_se12_i2c is i2c@890000 and its two
+ * pins are gpio176/gpio177 on qup1_se4 (oplus-chg-24211.dtsi:788-810), which
+ * palawan.dtsi's qup_i2c12_data_clk state already describes.
+ *
+ * bq27xxx writes a data-memory block only when the gauge has battery
+ * information, and that comes from a monitored-battery node; this node has
+ * none, so the gauge is read only.
+ */
+&qupv3_id_1 {
+	status = "okay";
+};
+
+&gpi_dma1 {
+	status = "okay";
+};
+
+&i2c12 {
+	status = "okay";
+	clock-frequency = <100000>;
+
+	gauge@55 {
+		compatible = "ti,bq27541";
+		reg = <0x55>;
+	};
+};
