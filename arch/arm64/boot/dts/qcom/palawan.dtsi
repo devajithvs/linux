@@ -2243,7 +2243,7 @@
 		};
 
 		ufs_mem_phy: phy@1d80000 {
-			compatible = "qcom,palawan-qmp-ufs-phy";
+			compatible = "qcom,palawan-qmp-ufs-phy", "qcom,sm8650-qmp-ufs-phy";
 			reg = <0 0x01d80000 0 0x2000>;
 
 			clocks = <&rpmhcc RPMH_CXO_CLK>,
