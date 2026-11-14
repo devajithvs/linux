@@ -2,9 +2,11 @@
 /*
  * OnePlus Nord 4 (Avalon), SM7675 / Lamma.
  *
- * First-boot scope: serial-less framebuffer console, ramoops, USB gadget, and
- * offline ADSP/PMIC GLINK battery groundwork. Storage, WLAN, display, GPU, and
- * SD stay disabled; the battery path has not been tested on hardware.
+ * Scope: serial-less simple-framebuffer console, ramoops, the USB gadget
+ * controller in peripheral mode, the ADSP/PMIC GLINK battery path, and the
+ * WCN6750 Wi-Fi path over the WPSS remoteproc. Display, GPU and SD stay
+ * disabled. The battery readout and the Wi-Fi interface have been exercised
+ * on hardware; the charge-ceiling write and a Wi-Fi scan have not.
  *
  * Electrical values are from the downstream OnePlus device tree
  * (android_kernel_modules_and_devicetree_oneplus_sm7675, branch
@@ -100,6 +102,22 @@
 		qcom,pmic-id = "b";
 
 		/*
+		 * S1B: WCN6750 WLAN vdd-1.8-xo and BT vddrfa1p7. 1856000-2040000 uV,
+		 * init 1856000 (downstream qcom/cliffs-regulators.dtsi:344-346; the
+		 * consumers are qca6750/vdd-1.8-xo at cliffs-qca6750.dtsi:84 and
+		 * bt-vdd-rfa1 at cliffs-qca6750-bt.dtsi:35). Neither the ath11k nor
+		 * the hci_qca probe runs before the WPSS firmware, so the rail is held
+		 * on at the downstream boot voltage.
+		 */
+		vreg_s1b_2p04: smps1 {
+			regulator-name = "vreg_s1b_2p04";
+			regulator-min-microvolt = <1856000>;
+			regulator-max-microvolt = <2040000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+		};
+
+		/*
 		 * S2B: WLAN/BT vdd-1.3-rfa on the downstream board and the parent
 		 * rail of UFS vccq. 1256000-1408000 uV, init 1256000
 		 * (downstream qcom/cliffs-regulators.dtsi:358-364). Mainline has no
@@ -109,6 +127,21 @@
 			regulator-name = "vreg_s2b_1p4";
 			regulator-min-microvolt = <1256000>;
 			regulator-max-microvolt = <1408000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+		};
+
+		/*
+		 * S3B: WCN6750 WLAN vdd-cx-mx and BT vddaon, vddbtcxmx,
+		 * vddrfacmn and vddrfa0p8. 968000-1040000 uV, init 984000
+		 * (downstream qcom/cliffs-regulators.dtsi:377-379; the consumers are
+		 * cliffs-qca6750.dtsi:82 and cliffs-qca6750-bt.dtsi:31-34). Held on
+		 * for the same reason as S1B.
+		 */
+		vreg_s3b_1p04: smps3 {
+			regulator-name = "vreg_s3b_1p04";
+			regulator-min-microvolt = <968000>;
+			regulator-max-microvolt = <1040000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 			regulator-always-on;
 		};
@@ -315,6 +348,39 @@
 	vdda-pll-supply = <&vreg_l4b_1p2>;
 	vdda-qref-supply = <&vreg_l2b_0p95>;
 
+	status = "okay";
+};
+
+/*
+ * WCN6750 Wi-Fi over the WPSS remoteproc. The nodes are upstream's: the
+ * Palawan/Lamma dtsi already carries the WPSS PAS (palawan.dtsi:5015), the
+ * WPSS and WLAN SMP2P entries (palawan.dtsi:1095-1148), the MSA carveout
+ * (palawan.dtsi:931) and the Wi-Fi node (palawan.dtsi:4467). The shipped
+ * Avalon dtbo names the same chip over the same link, a qcom,wcn6750 node
+ * with qcom,rproc-handle = <&wpss_pas>
+ * (android_kernel_modules_and_devicetree_oneplus_sm7675, branch
+ * oneplus/sm7675_b_16.0.0_nord_4, commit 150f7f8f3354dc680da90e83788bd25d9b983739,
+ * vendor/qcom/proprietary/wlan-devicetree/cliffs-qca6750.dtsi:34-38), and the
+ * running phone carries qca_cld3_qca6750 held by icnss2 (F0007). This is the
+ * WPSS path, so no PCIe controller is involved.
+ *
+ * The firmware name is the downstream one, qca6750/wpss.mdt
+ * (kernel_platform/qcom/proprietary/devicetree/qcom/cliffs.dtsi:1660). The
+ * file and its wpss.b* segments belong to the phone's own modem partition,
+ * which Android mounts at /vendor/firmware_mnt; they are not part of this
+ * tree and no firmware is redistributed here. ath11k additionally requests
+ * ath11k/WCN6750/hw1.0/{amss.bin,m3.bin,board-2.bin}
+ * (drivers/net/wireless/ath/ath11k/core.c:579-582, hw.h:74-82); the phone's
+ * modem partition carries neither m3.bin nor amss.bin, so how ath11k's two
+ * files map onto the vendor bundle is still open (F0035).
+ */
+&remoteproc_wpss {
+	firmware-name = "qca6750/wpss.mdt";
+
+	status = "okay";
+};
+
+&wifi {
 	status = "okay";
 };
 
