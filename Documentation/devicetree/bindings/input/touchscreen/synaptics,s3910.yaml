@@ -37,12 +37,16 @@ properties:
   vdd-supply:
     description: Analog supply, 2.7 V to 3.4 V.
 
+  vio-supply:
+    description: I/O supply, typically 1.8 V, that powers the SPI pads.
+
 required:
   - compatible
   - reg
   - interrupts
   - reset-gpios
   - vdd-supply
+  - vio-supply
 
 unevaluatedProperties: false
 
@@ -63,5 +67,6 @@ examples:
             interrupts = <129 IRQ_TYPE_LEVEL_LOW>;
             reset-gpios = <&tlmm 128 GPIO_ACTIVE_LOW>;
             vdd-supply = <&vreg_l22b>;
+            vio-supply = <&vreg_touch_vio>;
         };
     };
