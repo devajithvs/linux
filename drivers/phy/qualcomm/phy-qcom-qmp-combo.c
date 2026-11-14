@@ -4990,7 +4990,6 @@ static int qmp_combo_probe(struct platform_device *pdev)
 	of_node_put(usb_np);
 	of_node_put(dp_np);
 
-	dev_info(dev, "nord4-qmp: provider registered, probe returning\n");
 	return PTR_ERR_OR_ZERO(phy_provider);
 
 err_node_put:

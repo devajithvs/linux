@@ -106,7 +106,6 @@ static void deferred_probe_work_func(struct work_struct *work)
 
 		__device_set_deferred_probe_reason(dev, NULL);
 
-		dev_info(dev, "nord4-probe: defer retry %s\n", dev_name(dev));
 		/*
 		 * Drop the mutex while probing each device; the probe path may
 		 * manipulate the deferred list
@@ -666,12 +665,9 @@ static int really_probe(struct device *dev, const struct device_driver *drv)
 		return -EPROBE_DEFER;
 	}
 
-	dev_info(dev, "nord4-probe: enter %s\n", dev_name(dev));
 	link_ret = device_links_check_suppliers(dev);
-	if (link_ret == -EPROBE_DEFER) {
-		dev_info(dev, "nord4-probe: %s supplier defer\n", dev_name(dev));
+	if (link_ret == -EPROBE_DEFER)
 		return link_ret;
-	}
 
 	dev_dbg(dev, "bus: '%s': %s: probing driver %s with device\n",
 		drv->bus->name, __func__, drv->name);
@@ -752,15 +748,12 @@ re_probe:
 		goto re_probe;
 	}
 
-	dev_info(dev, "nord4-probe: %s probe ok\n", dev_name(dev));
 	pinctrl_init_done(dev);
 
-	dev_info(dev, "nord4-probe: %s domain sync\n", dev_name(dev));
 	if (dev->pm_domain && dev->pm_domain->sync)
 		dev->pm_domain->sync(dev);
 
 	driver_bound(dev);
-	dev_info(dev, "nord4-probe: %s bound\n", dev_name(dev));
 	dev_dbg(dev, "bus: '%s': %s: bound device to driver %s\n",
 		drv->bus->name, __func__, drv->name);
 	goto done;

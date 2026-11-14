@@ -1238,7 +1238,6 @@ static void device_links_flush_sync_list(struct list_head *list,
 	list_for_each_entry_safe(dev, tmp, list, links.defer_sync) {
 		list_del_init(&dev->links.defer_sync);
 
-		pr_info("nord4-probe: sync_state %s\n", dev_name(dev));
 		if (dev != dont_lock_dev)
 			device_lock(dev);
 
