@@ -4,9 +4,12 @@
  *
  * This is a minimal driver for the Synaptics S3910 in the OnePlus Nord 4
  * (Avalon). It speaks the vendor's TouchComm v1 packet format directly over
- * SPI: commands are a command byte, a 16-bit little-endian payload length,
- * the payload and a CRC-16; responses and reports are prefixed with the 0xa5
- * marker and a 16-bit length.
+ * SPI: commands are a command byte, a 16-bit little-endian payload length and
+ * the payload, optionally followed by a CRC-16 (only when the firmware's
+ * identify report advertises it); a response or report starts with the 0xa5
+ * marker, a code and a 16-bit length, and its payload arrives in one or more
+ * "continued read" packets that each start with 0xa5/0x03 and end in 0x5a
+ * padding.
  *
  * The downstream OnePlus stack splits the same protocol over several modules
  * (syna_tcm2_platform_spi.c, synaptics_touchcom_core_v1.c and
@@ -14,8 +17,9 @@
  * to identify the controller, fetch its touch report layout and report
  * multitouch contacts.
  *
- * Untested: the protocol constants and the power/reset timings are taken
- * from the downstream sources, not from an observed bus trace.
+ * The framing and the power/reset sequence follow that stack. On the three
+ * Avalon test boots of 2026-11-14 the controller still did not answer (the
+ * bus reads 0x00 for the first four bytes after the 0x07 magic); see F0065.
  */
 
 #include <linux/delay.h>
@@ -23,6 +27,7 @@
 #include <linux/input.h>
 #include <linux/input/mt.h>
 #include <linux/input/touchscreen.h>
+#include <linux/jiffies.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/property.h>
@@ -31,10 +36,22 @@
 #include <linux/unaligned.h>
 
 #define SYNA_TCM_MARKER			0xa5
+#define SYNA_TCM_PADDING		0x5a
+/* The byte the host writes before the firmware emits its startup report. */
+#define SYNA_TCM_MAGIC			0x07
 #define SYNA_TCM_HEADER_SIZE		4
 #define SYNA_TCM_CRC_SIZE		2
 #define SYNA_TCM_MAX_FRAME		2048
 #define SYNA_TCM_MAX_OBJECTS		10
+
+/* synaptics_touchcom_core_dev.h: RD_RETRY_US, CMD_RESPONSE_POLLING_DELAY_MS,
+ * CMD_RESPONSE_TIMEOUT_MS.
+ */
+#define SYNA_TCM_READ_RETRIES		10
+#define SYNA_TCM_RETRY_US_MIN		5000
+#define SYNA_TCM_RETRY_US_MAX		10000
+#define SYNA_TCM_POLL_US		20000
+#define SYNA_TCM_RESPONSE_TIMEOUT_MS	3000
 
 /* Downstream timings: synaptics,power-delay-ms/reset-active-ms/reset-delay-ms */
 #define SYNA_TCM_POWER_ON_MS		200
@@ -47,8 +64,6 @@
 #define SYNA_TCM_VDD_UV		3096000
 #define SYNA_TCM_RESET_ACTIVE_MS	10
 #define SYNA_TCM_RESET_DELAY_MS		80
-/* Bus turnaround after a command write, TAT_DELAY_US_MIN downstream */
-#define SYNA_TCM_TAT_US			100
 
 enum syna_tcm_command {
 	SYNA_TCM_CMD_IDENTIFY			= 0x02,
@@ -57,6 +72,7 @@ enum syna_tcm_command {
 };
 
 enum syna_tcm_status {
+	SYNA_TCM_STATUS_IDLE		= 0x00,
 	SYNA_TCM_STATUS_OK		= 0x01,
 	SYNA_TCM_STATUS_CONTINUED_READ	= 0x03,
 	SYNA_TCM_STATUS_ERROR		= 0x0f,
@@ -108,6 +124,9 @@ struct syna_tcm {
 	struct mutex io_lock;
 	u8 *tx;
 	u8 *rx;
+	u8 *payload;
+	bool has_crc;
+	bool has_extra_rc;
 	u8 report_config[256];
 	unsigned int report_config_len;
 	unsigned int max_x;
@@ -132,7 +151,7 @@ static u16 syna_tcm_crc16(const u8 *data, unsigned int len, u16 crc)
 static int syna_tcm_send(struct syna_tcm *tcm, u8 command,
 			 const u8 *payload, unsigned int payload_len)
 {
-	unsigned int len = 3 + payload_len + SYNA_TCM_CRC_SIZE;
+	unsigned int len = 3 + payload_len;
 	u16 crc;
 
 	if (payload_len > SYNA_TCM_MAX_FRAME - 5)
@@ -143,26 +162,89 @@ static int syna_tcm_send(struct syna_tcm *tcm, u8 command,
 	tcm->tx[2] = payload_len >> 8;
 	memcpy(&tcm->tx[3], payload, payload_len);
 
-	crc = syna_tcm_crc16(tcm->tx, 3 + payload_len, 0xffff);
-	tcm->tx[3 + payload_len] = crc & 0xff;
-	tcm->tx[4 + payload_len] = crc >> 8;
+	/*
+	 * The downstream stack writes the CRC-16 only once the identify
+	 * report has shown that the firmware appends one; before that it
+	 * assumes one is expected (synaptics_touchcom_core_v1.c:1326).
+	 */
+	if (tcm->has_crc) {
+		crc = syna_tcm_crc16(tcm->tx, 3 + payload_len, 0xffff);
+		tcm->tx[3 + payload_len] = crc & 0xff;
+		tcm->tx[4 + payload_len] = crc >> 8;
+		len += SYNA_TCM_CRC_SIZE;
+	}
 
 	return spi_write(tcm->spi, tcm->tx, len);
 }
 
-static int syna_tcm_receive(struct syna_tcm *tcm, u8 *code,
-			    unsigned int *payload_len)
+/*
+ * Read the 4-byte message header. The controller may not have the packet
+ * ready on the first transfer, so retry on a missing marker exactly as
+ * syna_tcm_v1_read() does (RD_RETRY_US between attempts).
+ */
+static int syna_tcm_read_header(struct syna_tcm *tcm, u8 *code,
+				unsigned int *payload_len)
 {
 	struct spi_transfer xfer = {
 		.tx_buf = tcm->tx,
 		.rx_buf = tcm->rx,
-		.len = SYNA_TCM_MAX_FRAME,
+		.len = SYNA_TCM_HEADER_SIZE,
 	};
 	struct spi_message msg;
+	unsigned int retry;
 	unsigned int len;
 	int err;
 
-	memset(tcm->tx, 0xff, SYNA_TCM_MAX_FRAME);
+	for (retry = 0; retry < SYNA_TCM_READ_RETRIES; retry++) {
+		memset(tcm->tx, 0xff, SYNA_TCM_HEADER_SIZE);
+
+		spi_message_init(&msg);
+		spi_message_add_tail(&xfer, &msg);
+
+		err = spi_sync(tcm->spi, &msg);
+		if (err)
+			return err;
+
+		if (tcm->rx[0] == SYNA_TCM_MARKER)
+			break;
+
+		usleep_range(SYNA_TCM_RETRY_US_MIN, SYNA_TCM_RETRY_US_MAX);
+	}
+
+	if (retry == SYNA_TCM_READ_RETRIES)
+		return -EPROTO;
+
+	len = get_unaligned_le16(&tcm->rx[2]);
+	if (len > SYNA_TCM_MAX_FRAME - 8)
+		return -EPROTO;
+
+	*code = tcm->rx[1];
+	*payload_len = len;
+
+	return 0;
+}
+
+/*
+ * Read the payload of an already-read header. TCM v1 delivers it in one
+ * continued-read packet: 0xa5, STATUS_CONTINUED_READ, the payload, a 0x5a
+ * padding byte and, if the firmware uses them, the CRC-16, the extra return
+ * code and a further 0x5a end-of-message. Read the whole assumed shape and
+ * keep only "payload_len" bytes.
+ */
+static int syna_tcm_read_payload(struct syna_tcm *tcm, unsigned int payload_len)
+{
+	struct spi_transfer xfer = {
+		.tx_buf = tcm->tx,
+		.rx_buf = tcm->rx,
+	};
+	struct spi_message msg;
+	unsigned int xfer_len;
+	int err;
+
+	xfer_len = 2 + payload_len + 1 + SYNA_TCM_CRC_SIZE + 1 + 1;
+	xfer.len = xfer_len;
+
+	memset(tcm->tx, 0xff, xfer_len);
 
 	spi_message_init(&msg);
 	spi_message_add_tail(&xfer, &msg);
@@ -171,13 +253,38 @@ static int syna_tcm_receive(struct syna_tcm *tcm, u8 *code,
 	if (err)
 		return err;
 
-	if (tcm->rx[0] != SYNA_TCM_MARKER)
+	if (tcm->rx[0] != SYNA_TCM_MARKER ||
+	    tcm->rx[1] != SYNA_TCM_STATUS_CONTINUED_READ)
 		return -EPROTO;
 
-	*code = tcm->rx[1];
-	len = get_unaligned_le16(&tcm->rx[2]);
-	if (len > SYNA_TCM_MAX_FRAME - SYNA_TCM_HEADER_SIZE)
-		return -EPROTO;
+	memcpy(tcm->payload, &tcm->rx[2], payload_len);
+
+	return 0;
+}
+
+/*
+ * Fetch one message. "code" and "payload_len" describe what arrived and the
+ * payload is left in tcm->payload. The raw continued-read packet stays in
+ * tcm->rx so the identify path can inspect the CRC/return-code tail.
+ */
+static int syna_tcm_read_message(struct syna_tcm *tcm, u8 *code,
+				 unsigned int *payload_len)
+{
+	unsigned int len;
+	int err;
+
+	err = syna_tcm_read_header(tcm, code, &len);
+	if (err)
+		return err;
+
+	if (!len) {
+		*payload_len = 0;
+		return 0;
+	}
+
+	err = syna_tcm_read_payload(tcm, len);
+	if (err)
+		return err;
 
 	*payload_len = len;
 
@@ -185,15 +292,17 @@ static int syna_tcm_receive(struct syna_tcm *tcm, u8 *code,
 }
 
 /*
- * Exchange one command and copy its response payload. The caller's buffer
- * keeps the payload valid after io_lock is dropped; reports arriving in the
- * interrupt thread are read from the same transfer buffers.
+ * Exchange one command and wait for its response. TCM v1 has no fixed
+ * turnaround, so poll in CMD_RESPONSE_POLLING_DELAY_MS steps until a
+ * non-idle message arrives or CMD_RESPONSE_TIMEOUT_MS elapses.
  */
 static int syna_tcm_cmd(struct syna_tcm *tcm, u8 command, u8 *code,
-			u8 *resp, unsigned int resp_size,
 			unsigned int *resp_len)
 {
-	unsigned int len;
+	unsigned long timeout = jiffies +
+				msecs_to_jiffies(SYNA_TCM_RESPONSE_TIMEOUT_MS);
+	unsigned int len = 0;
+	bool retry;
 	int err;
 
 	mutex_lock(&tcm->io_lock);
@@ -202,16 +311,25 @@ static int syna_tcm_cmd(struct syna_tcm *tcm, u8 command, u8 *code,
 	if (err)
 		goto out_unlock;
 
-	usleep_range(SYNA_TCM_TAT_US, SYNA_TCM_TAT_US + 100);
+	do {
+		retry = false;
 
-	err = syna_tcm_receive(tcm, code, &len);
-	if (err)
-		goto out_unlock;
+		err = syna_tcm_read_message(tcm, code, &len);
+		if (err) {
+			retry = true;
+		} else if (*code == SYNA_TCM_STATUS_IDLE && !len) {
+			/* No response yet; the device is still idle. */
+			retry = true;
+		}
 
-	if (resp && resp_size)
-		memcpy(resp, &tcm->rx[SYNA_TCM_HEADER_SIZE],
-		       min(len, resp_size));
-	if (resp_len)
+		if (retry)
+			usleep_range(SYNA_TCM_POLL_US, SYNA_TCM_POLL_US + 1000);
+	} while (retry && time_before(jiffies, timeout));
+
+	if (retry)
+		err = -ETIMEDOUT;
+
+	if (!err && resp_len)
 		*resp_len = len;
 
 out_unlock:
@@ -220,57 +338,94 @@ out_unlock:
 	return err;
 }
 
+/*
+ * The firmware emits its startup identify report only after the host writes
+ * the single magic byte; the downstream stack does that and then reads the
+ * 4-byte header before it ever sends a command
+ * (synaptics_touchcom_func_base.c:383-397). Detect whether the firmware
+ * appends a CRC-16 and an extra return code from that report's tail.
+ */
 static int syna_tcm_identify(struct syna_tcm *tcm)
 {
-	u8 id[64];
-	unsigned int len;
-	u8 code;
+	u8 magic = SYNA_TCM_MAGIC;
+	unsigned int len = 0;
+	u8 code = SYNA_TCM_STATUS_IDLE;
+	u16 crc;
 	int err;
 
-	err = syna_tcm_cmd(tcm, SYNA_TCM_CMD_IDENTIFY, &code,
-			   id, sizeof(id), &len);
+	err = spi_write(tcm->spi, &magic, sizeof(magic));
+	if (err)
+		return err;
+
+	mutex_lock(&tcm->io_lock);
+	err = syna_tcm_read_message(tcm, &code, &len);
+	mutex_unlock(&tcm->io_lock);
+
+	if (!err && code != SYNA_TCM_REPORT_IDENTIFY) {
+		err = syna_tcm_cmd(tcm, SYNA_TCM_CMD_IDENTIFY, &code, &len);
+		if (err)
+			return err;
+	}
+
 	if (err)
 		return err;
 
 	if (code != SYNA_TCM_REPORT_IDENTIFY || len < 2)
 		return -ENODEV;
 
-	/* struct tcm_identification_info: version, mode, part number, ... */
-	if (id[1] != SYNA_TCM_MODE_APPLICATION)
+	/*
+	 * struct tcm_identification_info: version, mode, part number,
+	 * build id, max write size, (v2) max read size.
+	 */
+	if (tcm->payload[1] != SYNA_TCM_MODE_APPLICATION)
 		return -ENODEV;
 
-	dev_info(&tcm->spi->dev, "S3910 in application mode, part %.16s\n",
-		 &id[2]);
+	/*
+	 * After the payload the packet carries 0x5a padding, then either the
+	 * CRC-16 or more padding, then an optional return byte
+	 * (synaptics_touchcom_core_v1.c:87-110). tcm->rx still holds the
+	 * continued-read packet, whose payload starts at offset 2.
+	 */
+	crc = get_unaligned_le16(&tcm->rx[2 + len + 1]);
+	tcm->has_crc = crc != 0x5a5a;
+	tcm->has_extra_rc = tcm->has_crc && tcm->rx[2 + len + 3] != SYNA_TCM_PADDING;
+
+	dev_info(&tcm->spi->dev,
+		 "S3910 in application mode, part %.16s, build %u, max write %u, crc %s\n",
+		 &tcm->payload[2], get_unaligned_le32(&tcm->payload[18]),
+		 get_unaligned_le16(&tcm->payload[22]),
+		 tcm->has_crc ? "yes" : "no");
 
 	return 0;
 }
 
 static int syna_tcm_get_app_info(struct syna_tcm *tcm)
 {
-	u8 info[64];
 	unsigned int len;
 	u8 code;
 	int err;
 
-	err = syna_tcm_cmd(tcm, SYNA_TCM_CMD_GET_APPLICATION_INFO, &code,
-			   info, sizeof(info), &len);
+	err = syna_tcm_cmd(tcm, SYNA_TCM_CMD_GET_APPLICATION_INFO, &code, &len);
 	if (err)
 		return err;
 
 	if (code != SYNA_TCM_STATUS_OK || len < 38)
 		return -EIO;
 
-	if (get_unaligned_le16(&info[2]) != 0) {
+	if (get_unaligned_le16(&tcm->payload[2]) != 0) {
 		dev_err(&tcm->spi->dev, "application status 0x%04x\n",
-			get_unaligned_le16(&info[2]));
+			get_unaligned_le16(&tcm->payload[2]));
 		return -ENODEV;
 	}
 
-	tcm->max_x = get_unaligned_le16(&info[32]);
-	tcm->max_y = get_unaligned_le16(&info[34]);
-	tcm->max_objects = get_unaligned_le16(&info[36]);
+	tcm->max_x = get_unaligned_le16(&tcm->payload[32]);
+	tcm->max_y = get_unaligned_le16(&tcm->payload[34]);
+	tcm->max_objects = get_unaligned_le16(&tcm->payload[36]);
 
-	dev_info(&tcm->spi->dev, "%ux%u, %u objects\n",
+	dev_info(&tcm->spi->dev,
+		 "app info %u.%u, config id %u, %ux%u, %u objects\n",
+		 tcm->payload[0], tcm->payload[1],
+		 get_unaligned_le16(&tcm->payload[16]),
 		 tcm->max_x, tcm->max_y, tcm->max_objects);
 
 	if (!tcm->max_x || !tcm->max_y || !tcm->max_objects)
@@ -284,17 +439,26 @@ static int syna_tcm_get_app_info(struct syna_tcm *tcm)
 
 static int syna_tcm_get_report_config(struct syna_tcm *tcm)
 {
+	unsigned int len;
 	u8 code;
 	int err;
 
 	err = syna_tcm_cmd(tcm, SYNA_TCM_CMD_GET_TOUCH_REPORT_CONFIG, &code,
-			   tcm->report_config, sizeof(tcm->report_config),
-			   &tcm->report_config_len);
+			   &len);
 	if (err)
 		return err;
 
-	if (code != SYNA_TCM_STATUS_OK || !tcm->report_config_len)
+	if (code != SYNA_TCM_STATUS_OK || !len)
 		return -EIO;
+
+	if (len > sizeof(tcm->report_config)) {
+		dev_err(&tcm->spi->dev, "report config %u bytes, buffer %zu\n",
+			len, sizeof(tcm->report_config));
+		return -E2BIG;
+	}
+
+	memcpy(tcm->report_config, tcm->payload, len);
+	tcm->report_config_len = len;
 
 	return 0;
 }
@@ -481,7 +645,7 @@ static irqreturn_t syna_tcm_irq(int irq, void *data)
 	int err;
 
 	mutex_lock(&tcm->io_lock);
-	err = syna_tcm_receive(tcm, &code, &len);
+	err = syna_tcm_read_message(tcm, &code, &len);
 	mutex_unlock(&tcm->io_lock);
 
 	if (err) {
@@ -490,25 +654,36 @@ static irqreturn_t syna_tcm_irq(int irq, void *data)
 	}
 
 	if (code == SYNA_TCM_REPORT_TOUCH && len)
-		syna_tcm_report_touch(tcm, &tcm->rx[SYNA_TCM_HEADER_SIZE], len);
+		syna_tcm_report_touch(tcm, tcm->payload, len);
 
 	return IRQ_HANDLED;
+}
+
+static void syna_tcm_power_off(struct syna_tcm *tcm)
+{
+	gpiod_set_value_cansleep(tcm->reset_gpio, 1);
+	regulator_disable(tcm->vdd);
 }
 
 static int syna_tcm_power_on(struct syna_tcm *tcm)
 {
 	int err;
 
-	err = regulator_enable(tcm->vdd);
-	if (err)
-		return err;
-
+	/*
+	 * The downstream stack programs the rail before it enables it
+	 * (syna_tcm2_platform_spi.c:527-563): the board's init voltage is
+	 * 2.7 V and the controller expects 3.1 V.
+	 */
 	if (regulator_count_voltages(tcm->vdd) > 0) {
 		err = regulator_set_voltage(tcm->vdd, SYNA_TCM_VDD_UV,
 					    SYNA_TCM_VDD_UV);
 		if (err)
-			goto err_disable;
+			return err;
 	}
+
+	err = regulator_enable(tcm->vdd);
+	if (err)
+		return err;
 
 	/* The controller samples its reset line only after the rail is up. */
 	msleep(SYNA_TCM_POWER_ON_MS);
@@ -519,11 +694,6 @@ static int syna_tcm_power_on(struct syna_tcm *tcm)
 	msleep(SYNA_TCM_RESET_DELAY_MS);
 
 	return 0;
-
-err_disable:
-	regulator_disable(tcm->vdd);
-
-	return err;
 }
 
 static int syna_tcm_probe(struct spi_device *spi)
@@ -542,7 +712,8 @@ static int syna_tcm_probe(struct spi_device *spi)
 
 	tcm->tx = devm_kmalloc(&spi->dev, SYNA_TCM_MAX_FRAME, GFP_KERNEL);
 	tcm->rx = devm_kmalloc(&spi->dev, SYNA_TCM_MAX_FRAME, GFP_KERNEL);
-	if (!tcm->tx || !tcm->rx)
+	tcm->payload = devm_kmalloc(&spi->dev, SYNA_TCM_MAX_FRAME, GFP_KERNEL);
+	if (!tcm->tx || !tcm->rx || !tcm->payload)
 		return -ENOMEM;
 
 	tcm->vdd = devm_regulator_get(&spi->dev, "vdd");
@@ -550,7 +721,12 @@ static int syna_tcm_probe(struct spi_device *spi)
 		return dev_err_probe(&spi->dev, PTR_ERR(tcm->vdd),
 				     "failed to get vdd\n");
 
-	tcm->reset_gpio = devm_gpiod_get(&spi->dev, "reset", GPIOD_OUT_HIGH);
+	/*
+	 * The downstream stack requests the reset line de-asserted (physical
+	 * high, GPIO_ACTIVE_LOW here) before it enables the rail, and only then
+	 * runs its reset pulse (syna_tcm2_platform_spi.c:322-329,159-172).
+	 */
+	tcm->reset_gpio = devm_gpiod_get(&spi->dev, "reset", GPIOD_OUT_LOW);
 	if (IS_ERR(tcm->reset_gpio))
 		return dev_err_probe(&spi->dev, PTR_ERR(tcm->reset_gpio),
 				     "failed to get reset GPIO\n");
@@ -560,21 +736,29 @@ static int syna_tcm_probe(struct spi_device *spi)
 		return dev_err_probe(&spi->dev, err, "failed to power on\n");
 
 	err = syna_tcm_identify(tcm);
-	if (err)
+	if (err) {
+		syna_tcm_power_off(tcm);
 		return dev_err_probe(&spi->dev, err, "identify failed\n");
+	}
 
 	err = syna_tcm_get_app_info(tcm);
-	if (err)
+	if (err) {
+		syna_tcm_power_off(tcm);
 		return dev_err_probe(&spi->dev, err, "app info failed\n");
+	}
 
 	err = syna_tcm_get_report_config(tcm);
-	if (err)
+	if (err) {
+		syna_tcm_power_off(tcm);
 		return dev_err_probe(&spi->dev, err,
 				     "report config failed\n");
+	}
 
 	input = devm_input_allocate_device(&spi->dev);
-	if (!input)
+	if (!input) {
+		syna_tcm_power_off(tcm);
 		return -ENOMEM;
+	}
 
 	input->name = "Synaptics S3910 Touchscreen";
 	input->id.bustype = BUS_SPI;
@@ -586,22 +770,28 @@ static int syna_tcm_probe(struct spi_device *spi)
 	input_set_abs_params(input, ABS_MT_PRESSURE, 0, 255, 0, 0);
 
 	err = input_mt_init_slots(input, tcm->max_objects, INPUT_MT_DIRECT);
-	if (err)
+	if (err) {
+		syna_tcm_power_off(tcm);
 		return err;
+	}
 
 	input_set_drvdata(input, tcm);
 	tcm->input = input;
 
 	err = input_register_device(input);
-	if (err)
+	if (err) {
+		syna_tcm_power_off(tcm);
 		return err;
+	}
 
 	err = devm_request_threaded_irq(&spi->dev, spi->irq, NULL,
 					syna_tcm_irq, IRQF_ONESHOT,
 					"syna-tcm", tcm);
-	if (err)
+	if (err) {
+		syna_tcm_power_off(tcm);
 		return dev_err_probe(&spi->dev, err,
 				     "failed to request IRQ\n");
+	}
 
 	return 0;
 }
@@ -614,6 +804,7 @@ MODULE_DEVICE_TABLE(of, syna_tcm_of_match);
 
 static const struct spi_device_id syna_tcm_spi_ids[] = {
 	{ "syna-s3910" },
+	{ "s3910" },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, syna_tcm_spi_ids);
