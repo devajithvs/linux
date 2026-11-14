@@ -152,6 +152,25 @@
 	};
 };
 
+/*
+ * The board's fixed clocks are declared without a rate in lamma.dtsi/palawan.dtsi,
+ * as on every Qualcomm SoC dtsi, and of_fixed_clk_setup() refuses a node without
+ * clock-frequency (drivers/clk/clk-fixed-rate.c:168), so without these the XO tree
+ * has no provider at all: RPMH_CXO_CLK and everything below it read 0 Hz, and the
+ * eUSB2 PHY rejects its "ref" clock (F0024). 76.8 MHz CXO and 32 kHz sleep clock
+ * are the downstream OnePlus cliffs values
+ * (android_kernel_modules_and_devicetree_oneplus_sm7675, branch
+ * oneplus/sm7675_b_16.0.0_nord_4, commit 150f7f8f3354dc680da90e83788bd25d9b983739,
+ * kernel_platform/qcom/proprietary/devicetree/qcom/cliffs.dtsi:1144-1155).
+ */
+&xo_board {
+	clock-frequency = <76800000>;
+};
+
+&sleep_clk {
+	clock-frequency = <32000>;
+};
+
 &usb_1 {
 	dr_mode = "peripheral";
 	maximum-speed = "high-speed";
