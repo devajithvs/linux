@@ -990,3 +990,18 @@
 		pinctrl-0 = <&ts_int_default>, <&ts_reset_default>;
 	};
 };
+
+/*
+ * The QUP0 wrapper and its GPI DMA, which own spi4. palawan.dtsi leaves both
+ * disabled and only spi4 is enabled above, so the SPI controller never probes
+ * and the touch screen's node never becomes a spi_device: the first touch boot
+ * showed the driver registered and no SPI device, and the second showed
+ * "a90000.spi: deferred probe pending: geni_spi: Failed to get tx DMA ch".
+ */
+&qupv3_id_0 {
+	status = "okay";
+};
+
+&gpi_dma0 {
+	status = "okay";
+};
