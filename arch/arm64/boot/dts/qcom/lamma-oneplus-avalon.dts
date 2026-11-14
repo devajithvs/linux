@@ -71,6 +71,25 @@
 			height = <2772>;
 			stride = <(1240 * 4)>;
 			format = "a8r8g8b8";
+
+			/*
+			 * The panel is the bootloader's splash and this framebuffer is
+			 * its only console, so hold the display's RPMh domain. Without
+			 * a client, rpmhpd_sync_state() aggregates corner 0 for every
+			 * domain nobody enabled (drivers/pmdomain/qcom/rpmhpd.c:1213-1238)
+			 * and the command-mode panel stops refreshing at
+			 * of_platform_sync_state_init() (F0023). A power-domains entry
+			 * powers the domain on in genpd_dev_pm_attach()
+			 * (drivers/pmdomain/core.c:3407-3415), and the sync then keeps
+			 * it at its enable corner. MMCX is the display's rail: the
+			 * downstream display tree declares it as mmcx-supply
+			 * (<&VDD_MMCX_LEVEL>, android_kernel_modules_and_devicetree_oneplus_sm7675,
+			 * oneplus/sm7675_b_16.0.0_nord_4, 150f7f8f3354,
+			 * vendor/qcom/proprietary/display-devicetree/display/cliffs-sde.dtsi:229),
+			 * and upstream gives the display clock controller the same one
+			 * (palawan.dtsi:3742). Drop with the display bring-up.
+			 */
+			power-domains = <&rpmhpd RPMHPD_MMCX>;
 		};
 	};
 };
