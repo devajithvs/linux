@@ -27,6 +27,7 @@
 #include "pm7550ba.dtsi"
 #include "pmr735a.dtsi"
 #include "pmk8550.dtsi"
+#include "pm8550vs.dtsi"
 
 / {
 	model = "OnePlus Nord 4 (Avalon)";
@@ -126,6 +127,26 @@
 			 */
 			power-domains = <&rpmhpd RPMHPD_MMCX>;
 		};
+	};
+
+	/*
+	 * The S3910's 1.8 V I/O rail. The downstream Avalon node has no
+	 * vcc_1v8-supply; instead it names synaptics,avdd-gpio =
+	 * <&pm8550vs_c_gpios 3 0x1>, pinctrl state ts_vddio_active_primary
+	 * (power-source 1 = 1.8 V), and the SPI platform driver drives that
+	 * pad to synaptics,power-on-state = 1 before it enables the analog
+	 * rail (android_kernel_modules_and_devicetree_oneplus_sm7675,
+	 * oneplus/sm7675_b_16.0.0_nord_4, 150f7f8f3354,
+	 * vendor/oplus/kernel/touchpanel/synaptics_hbp/syna_tcm2_platform_spi.c:
+	 * 366-402,464-490). Model it as the switched rail it is.
+	 */
+	touch_vio: regulator-touch-vio {
+		compatible = "regulator-fixed";
+		regulator-name = "touch_vio";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		enable-active-high;
+		gpios = <&pm8550vs_c_gpios 3 GPIO_ACTIVE_HIGH>;
 	};
 };
 
@@ -964,9 +985,38 @@
 };
 
 /*
+ * The PMIC that owns the touch controller's I/O-rail switch. The downstream
+ * Avalon DT enables this PM8550VS instance and its touch node names one of
+ * its GPIOs (pm8550vs_c_gpios 3) as synaptics,avdd-gpio
+ * (kernel_platform/qcom/proprietary/devicetree/oplus/tp/avalon-oplus-tp-24211.dtsi:1-9,266).
+ */
+&pm8550vs_c {
+	status = "okay";
+};
+
+&pm8550vs_c_gpios {
+	/*
+	 * The pad that switches the S3910's 1.8 V I/O rail. The downstream
+	 * ts_vddio_active_primary state selects this same power source:
+	 * power-source = <1> is 1.8 V
+	 * (avalon-oplus-tp-24211.dtsi:1-9). The SPI platform driver drives
+	 * the pad to power-on-state = 1 when it powers the controller
+	 * (syna_tcm2_platform_spi.c:366-402,464-490), so the pad is an output
+	 * here and the state only selects the voltage domain.
+	 */
+	ts_vddio_default: ts-vddio-default-state {
+		pins = "gpio3";
+		function = "normal";
+		power-source = <1>;
+		bias-disable;
+	};
+};
+
+/*
  * Touch. The S3910 sits on qupv3_se4_spi (chip select 0) at 19 MHz, with a
- * level-low interrupt on TLMM 129, an active-low reset on TLMM 128 and its
- * analog rail on L22B; the values are the downstream Avalon touch node
+ * level-low interrupt on TLMM 129, an active-low reset on TLMM 128, its
+ * analog rail on L22B and its 1.8 V I/O rail switched by pm8550vs_c GPIO 3;
+ * the values are the downstream Avalon touch node
  * (kernel_platform/qcom/proprietary/devicetree/oplus/tp/avalon-oplus-tp-24211.dtsi:247-286).
  * It runs its own firmware and speaks TouchComm v1, so no firmware download
  * is needed from the host.
@@ -985,9 +1035,11 @@
 
 		reset-gpios = <&tlmm 128 GPIO_ACTIVE_LOW>;
 		vdd-supply = <&vreg_l22b>;
+		vio-supply = <&touch_vio>;
 
 		pinctrl-names = "default";
-		pinctrl-0 = <&ts_int_default>, <&ts_reset_default>;
+		pinctrl-0 = <&ts_int_default>, <&ts_reset_default>,
+			    <&ts_vddio_default>;
 	};
 };
 
