@@ -629,6 +629,17 @@
 };
 
 /*
+ * The board has no WSA speaker: Avalon's downstream audio overlay disables the
+ * WSA macro and all four WSA amplifier nodes
+ * (audio-devicetree/oplus/cliffs-audio-overlay-common.dtsi:13-35) and sets
+ * qcom,wsa-max-devs = <0> (oplus/avalon-24211-audio-cliffs-overlay.dtsi:59).
+ * Nothing in this tree consumes the macro's clock.
+ */
+&lpass_wsamacro {
+	status = "disabled";
+};
+
+/*
  * Avalon downstream's cliffs-adsp_loader.dtsi names these firmware files
  * (OnePlusOSS commit 150f7f8f3354dc680da90e83788bd25d9b983739, lines 3-4).
  * A later initramfs step must source them from the phone's own
