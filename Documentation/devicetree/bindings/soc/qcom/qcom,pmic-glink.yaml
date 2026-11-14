@@ -44,6 +44,7 @@ properties:
           - const: qcom,pmic-glink
       - items:
           - enum:
+              - qcom,avalon-pmic-glink
               - qcom,eliza-pmic-glink
               - qcom,milos-pmic-glink
               - qcom,palawan-pmic-glink
