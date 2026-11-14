@@ -486,6 +486,18 @@
 	status = "disabled";
 };
 
+/*
+ * The zap shader is authenticated by the secure monitor, so it has to be the
+ * file signed for this device: the build-1001 vendor partition's
+ * /vendor/firmware directory lists gen71100_zap.mbn next to gen71100_sqe.fw and
+ * gen71100_gmu.bin, the three names the mainline catalog asks for on chip
+ * 0x43030b00 (drivers/gpu/drm/msm/adreno/a6xx_catalog.c:1618-1628). The file is
+ * not added here; a later step stages the phone's copy under this path.
+ */
+&gpu_zap_shader {
+	firmware-name = "qcom/lamma/gen71100_zap.mbn";
+};
+
 &tlmm {
 	/*
 	 * GPIOs 56-60 are owned by a trusted application and fault the XPU when
