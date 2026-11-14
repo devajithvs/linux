@@ -1147,8 +1147,12 @@ static void genpd_power_off_work_fn(struct work_struct *work)
 
 	genpd = container_of(work, struct generic_pm_domain, power_off_work);
 
+	pr_info("nord4-probe: genpd off work %s (on=%d)\n", genpd->name,
+		genpd_status_on(genpd));
 	genpd_lock(genpd);
 	genpd_power_off(genpd, false, 0);
+	pr_info("nord4-probe: genpd off %s done (on=%d)\n", genpd->name,
+		genpd_status_on(genpd));
 	genpd_unlock(genpd);
 }
 
@@ -3310,6 +3314,7 @@ static void genpd_dev_pm_sync(struct device *dev)
 	if (IS_ERR(pd))
 		return;
 
+	dev_info(dev, "nord4-probe: genpd sync %s\n", pd->name);
 	genpd_queue_power_off_work(pd);
 }
 
