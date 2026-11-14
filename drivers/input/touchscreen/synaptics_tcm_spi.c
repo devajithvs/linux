@@ -38,6 +38,13 @@
 
 /* Downstream timings: synaptics,power-delay-ms/reset-active-ms/reset-delay-ms */
 #define SYNA_TCM_POWER_ON_MS		200
+/*
+ * The downstream driver targets 3.1 V, but this rail's PM7550 pldo law is
+ * 1.504 V + n * 8 mV (drivers/regulator/qcom-rpmh-regulator.c:780-788),
+ * so 3.1 V is not a reachable step. Ask for the nearest step at or below
+ * it; the board's 2.7-3.4 V constraints are unchanged.
+ */
+#define SYNA_TCM_VDD_UV		3096000
 #define SYNA_TCM_RESET_ACTIVE_MS	10
 #define SYNA_TCM_RESET_DELAY_MS		80
 /* Bus turnaround after a command write, TAT_DELAY_US_MIN downstream */
@@ -497,7 +504,8 @@ static int syna_tcm_power_on(struct syna_tcm *tcm)
 		return err;
 
 	if (regulator_count_voltages(tcm->vdd) > 0) {
-		err = regulator_set_voltage(tcm->vdd, 3100000, 3100000);
+		err = regulator_set_voltage(tcm->vdd, SYNA_TCM_VDD_UV,
+					    SYNA_TCM_VDD_UV);
 		if (err)
 			goto err_disable;
 	}
