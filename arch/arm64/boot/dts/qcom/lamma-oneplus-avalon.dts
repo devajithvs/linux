@@ -757,3 +757,16 @@
 		reg = <0x55>;
 	};
 };
+
+/*
+ * The PMK8550 RTC is the only clock that survives a power cycle. Without
+ * allow-set-time the driver keeps the offset between the host clock and the
+ * RTC counter in an nvmem cell or a UEFI variable (rtc-pm8xxx.c:345-359,
+ * :616-628). The stock Avalon overlay's rtc@6100 carries neither, and the
+ * phone has no UEFI, so RTC_SET_TIME would fail with -ENODEV. The vendor
+ * driver writes the counter directly, and the binding's allow-set-time is
+ * exactly that: the host CPU may set the RTC (qcom-pm8xxx-rtc.yaml).
+ */
+&pmk8550_rtc {
+	allow-set-time;
+};
