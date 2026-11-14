@@ -121,6 +121,7 @@ struct syna_tcm {
 	struct input_dev *input;
 	struct gpio_desc *reset_gpio;
 	struct regulator *vdd;
+	struct regulator *vio;
 	struct mutex io_lock;
 	u8 *tx;
 	u8 *rx;
@@ -663,11 +664,22 @@ static void syna_tcm_power_off(struct syna_tcm *tcm)
 {
 	gpiod_set_value_cansleep(tcm->reset_gpio, 1);
 	regulator_disable(tcm->vdd);
+	regulator_disable(tcm->vio);
 }
 
 static int syna_tcm_power_on(struct syna_tcm *tcm)
 {
 	int err;
+
+	/*
+	 * The downstream stack enables the I/O rail's switch first and only
+	 * then the analog supply (syna_tcm2_platform_spi.c:464-490,366-402):
+	 * the GPIO it drives there is the touch node's avdd-gpio, the
+	 * pm8550vs_c GPIO 3 pad whose state is named ts_vddio.
+	 */
+	err = regulator_enable(tcm->vio);
+	if (err)
+		return err;
 
 	/*
 	 * The downstream stack programs the rail before it enables it
@@ -678,12 +690,12 @@ static int syna_tcm_power_on(struct syna_tcm *tcm)
 		err = regulator_set_voltage(tcm->vdd, SYNA_TCM_VDD_UV,
 					    SYNA_TCM_VDD_UV);
 		if (err)
-			return err;
+			goto err_vio;
 	}
 
 	err = regulator_enable(tcm->vdd);
 	if (err)
-		return err;
+		goto err_vio;
 
 	/* The controller samples its reset line only after the rail is up. */
 	msleep(SYNA_TCM_POWER_ON_MS);
@@ -694,6 +706,10 @@ static int syna_tcm_power_on(struct syna_tcm *tcm)
 	msleep(SYNA_TCM_RESET_DELAY_MS);
 
 	return 0;
+
+err_vio:
+	regulator_disable(tcm->vio);
+	return err;
 }
 
 static int syna_tcm_probe(struct spi_device *spi)
@@ -720,6 +736,11 @@ static int syna_tcm_probe(struct spi_device *spi)
 	if (IS_ERR(tcm->vdd))
 		return dev_err_probe(&spi->dev, PTR_ERR(tcm->vdd),
 				     "failed to get vdd\n");
+
+	tcm->vio = devm_regulator_get(&spi->dev, "vio");
+	if (IS_ERR(tcm->vio))
+		return dev_err_probe(&spi->dev, PTR_ERR(tcm->vio),
+				     "failed to get vio\n");
 
 	/*
 	 * The downstream stack requests the reset line de-asserted (physical
