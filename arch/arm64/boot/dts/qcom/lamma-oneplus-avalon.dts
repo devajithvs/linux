@@ -175,6 +175,23 @@
 	status = "okay";
 };
 
+/*
+ * HACK: the panel is the bootloader's splash, displayed by simplefb, until the
+ * MSM DRM driver and a panel driver exist (display, GPU and the rest stay
+ * disabled at the top of this file). Enabling dispcc lets its probe stop the
+ * display: disp_cc_sm8550_probe() configures both Lucid OLE PLLs
+ * unconditionally (drivers/clk/qcom/dispcc-sm8550.c:1817-1818), and
+ * clk_lucid_ole_pll_configure() disables the PLL output before reprogramming it
+ * (drivers/clk/qcom/clk-alpha-pll.c:2391), so the MDP/DSI clock sources the
+ * bootloader left running stop; it also turns on MDP clock gating
+ * (dispcc-sm8550.c:1821). The panel freezes at the dispcc probe, one deferred
+ * retry after the QMP PHY registers the DP clocks dispcc waits for (F0022).
+ * Re-enable with the display bring-up.
+ */
+&dispcc {
+	status = "disabled";
+};
+
 &tlmm {
 	/*
 	 * GPIOs 56-60 are owned by a trusted application and fault the XPU when
