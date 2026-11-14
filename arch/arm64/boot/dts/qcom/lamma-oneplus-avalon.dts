@@ -772,23 +772,27 @@
 };
 
 /*
- * The WCN6750's PMU takes its low-frequency sleep clock from PMK8550 GPIO5,
+ * The WCN6750's PMU takes its low-frequency sleep clock from PMK8550 GPIO3,
  * which the PMIC drives in "func1" mode (the alternate sleep clock output).
  * Without it the WPSS firmware asserts as soon as the first vdev is created,
  * in its WMAC transition: "cmnos_assert.c:400:Asserted in
  * whal_wmac_recipes.c:whal_wmac_transition_to_fw_control:1734", and the
- * interface never comes up. The phone's own DT carries exactly this node on
- * this pin (the stock volcano DTB's pmk8550 pinctrl@b800: pins "gpio5",
- * function "func1", input-disable, output-enable, bias-disable,
- * power-source 0), and the same fix with a different pin is what the
- * upstream WCN6755 bring-up needed for the identical assert.
+ * interface never comes up. This board's own DT carries exactly this state on
+ * this pin: the stock dtbo's Avalon overlay (entry1.dtbo, pinctrl@b800) has
+ * pins "gpio3", function "func1", input-disable, output-enable, bias-disable
+ * and power-source 0, and the downstream board file repeats it
+ * (vendor/qcom/proprietary/devicetree/qcom/cliffs-pmic-overlay.dtsi:81). The
+ * same fix with a different pin is what the upstream WCN6755 bring-up needed
+ * for the identical assert. The state is the GPIO controller's own default
+ * state, so it is claimed when that controller registers, before the WPSS is
+ * started.
  */
 &pmk8550_gpios {
 	pinctrl-0 = <&alt_sleep_clk_default>;
 	pinctrl-names = "default";
 
 	alt_sleep_clk_default: alt-sleep-clk-state {
-		pins = "gpio5";
+		pins = "gpio3";
 		function = "func1";
 		input-disable;
 		output-enable;
