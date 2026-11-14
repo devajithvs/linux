@@ -23,6 +23,7 @@ enum qcom_battmgr_variant {
 	QCOM_BATTMGR_SC8280XP,
 	QCOM_BATTMGR_SM8350,
 	QCOM_BATTMGR_SM8550,
+	QCOM_BATTMGR_SM8550_OPLUS,
 	QCOM_BATTMGR_X1E80100,
 };
 
@@ -732,6 +733,10 @@ static int qcom_battmgr_charge_control_thresholds_init(struct qcom_battmgr *batt
 	int ret;
 	u8 en, end_soc, start_soc, delta_soc;
 
+	/* This firmware has no charge-control thresholds; see sm8550_oplus_bat_props. */
+	if (battmgr->variant == QCOM_BATTMGR_SM8550_OPLUS)
+		return 0;
+
 	ret = nvmem_cell_read_u8(battmgr->dev->parent, "charge_limit_en", &en);
 	if (!ret && en != 0) {
 		ret = nvmem_cell_read_u8(battmgr->dev->parent, "charge_limit_end", &end_soc);
@@ -928,6 +933,48 @@ static const struct power_supply_desc sm8550_bat_psy_desc = {
 	.get_property = qcom_battmgr_bat_get_property,
 	.set_property = qcom_battmgr_bat_set_property,
 	.property_is_writeable = qcom_battmgr_bat_is_writeable,
+};
+
+/*
+ * OPPO/OnePlus ADSP firmware reuses battery property ids 24-26 for its charge
+ * enable and its PDO/QC setters (oplus_hal_adsp.h:249-323) instead of
+ * mainline's charge-control thresholds, and its 0x48 opcode is the AP-bound
+ * BC_VOOC_STATUS_GET notification rather than a charge-control request
+ * (oplus_hal_adsp.c:3407-3410). Neither the threshold attributes nor a
+ * property >= 24 may be used with that firmware, so the variant exposes the
+ * battery readout only and registers no setter: the attributes are read-only
+ * and a direct set returns -ENODEV (power_supply_core.c).
+ */
+static const enum power_supply_property sm8550_oplus_bat_props[] = {
+	POWER_SUPPLY_PROP_STATUS,
+	POWER_SUPPLY_PROP_HEALTH,
+	POWER_SUPPLY_PROP_PRESENT,
+	POWER_SUPPLY_PROP_CHARGE_TYPE,
+	POWER_SUPPLY_PROP_CAPACITY,
+	POWER_SUPPLY_PROP_VOLTAGE_OCV,
+	POWER_SUPPLY_PROP_VOLTAGE_NOW,
+	POWER_SUPPLY_PROP_VOLTAGE_MAX,
+	POWER_SUPPLY_PROP_CURRENT_NOW,
+	POWER_SUPPLY_PROP_TEMP,
+	POWER_SUPPLY_PROP_TECHNOLOGY,
+	POWER_SUPPLY_PROP_CHARGE_COUNTER,
+	POWER_SUPPLY_PROP_CYCLE_COUNT,
+	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
+	POWER_SUPPLY_PROP_CHARGE_FULL,
+	POWER_SUPPLY_PROP_MODEL_NAME,
+	POWER_SUPPLY_PROP_TIME_TO_FULL_AVG,
+	POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG,
+	POWER_SUPPLY_PROP_INTERNAL_RESISTANCE,
+	POWER_SUPPLY_PROP_STATE_OF_HEALTH,
+	POWER_SUPPLY_PROP_POWER_NOW,
+};
+
+static const struct power_supply_desc sm8550_oplus_bat_psy_desc = {
+	.name = "qcom-battmgr-bat",
+	.type = POWER_SUPPLY_TYPE_BATTERY,
+	.properties = sm8550_oplus_bat_props,
+	.num_properties = ARRAY_SIZE(sm8550_oplus_bat_props),
+	.get_property = qcom_battmgr_bat_get_property,
 };
 
 static int qcom_battmgr_ac_get_property(struct power_supply *psy,
@@ -1623,6 +1670,7 @@ static void qcom_battmgr_pdr_notify(void *priv, int state)
 }
 
 static const struct of_device_id qcom_battmgr_of_variants[] = {
+	{ .compatible = "qcom,avalon-pmic-glink", .data = (void *)QCOM_BATTMGR_SM8550_OPLUS },
 	{ .compatible = "qcom,glymur-pmic-glink", .data = (void *)QCOM_BATTMGR_X1E80100 },
 	{ .compatible = "qcom,kaanapali-pmic-glink", .data = (void *)QCOM_BATTMGR_SM8550 },
 	{ .compatible = "qcom,sc8180x-pmic-glink", .data = (void *)QCOM_BATTMGR_SC8280XP },
@@ -1704,6 +1752,8 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
 	} else {
 		if (battmgr->variant == QCOM_BATTMGR_SM8550)
 			psy_desc = &sm8550_bat_psy_desc;
+		else if (battmgr->variant == QCOM_BATTMGR_SM8550_OPLUS)
+			psy_desc = &sm8550_oplus_bat_psy_desc;
 		else
 			psy_desc = &sm8350_bat_psy_desc;
 
