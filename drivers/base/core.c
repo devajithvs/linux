@@ -1277,15 +1277,7 @@ void device_links_supplier_sync_state_resume(void)
 		 * sync_list because defer_sync is used for both lists.
 		 */
 		list_del_init(&dev->links.defer_sync);
-		/*
-		 * HACK: the display is the bootloader's splash and nothing in the
-		 * kernel votes for it; a supplier's sync_state() here drops the
-		 * bootloader's power/clock votes for it and the panel stops
-		 * (F0023). Name the supplier instead of calling it. Temporary:
-		 * drop with the display bring-up.
-		 */
-		pr_info("nord4-usb: supplier sync_state skipped: %s\n",
-			dev_name(dev));
+		__device_links_queue_sync_state(dev, &sync_list);
 	}
 out:
 	device_links_write_unlock();
