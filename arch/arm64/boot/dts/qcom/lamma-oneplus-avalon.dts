@@ -408,6 +408,19 @@
 };
 
 &wifi {
+	/*
+	 * Bring-up placeholder for the interface address. The firmware's WMI
+	 * ready event can carry an all-zero address, and wlan0 then registers as
+	 * 00:00:00:00:00:00; udev's persistent-MAC policy (99-default.link)
+	 * rewrites that as the WMAC is configured, and the WPSS asserts at that
+	 * moment (F0078). A locally administered address keeps the interface's
+	 * address stable from registration, so the WMAC is never reconfigured.
+	 * The real per-device address lives in the phone's `wlan` NV; it should
+	 * later come from a provisioned nvmem cell or a boot-time fixup, never
+	 * from a committed device tree.
+	 */
+	local-mac-address = [02 00 00 00 00 01];
+
 	status = "okay";
 };
 
