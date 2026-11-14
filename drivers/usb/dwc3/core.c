@@ -1355,7 +1355,6 @@ int dwc3_core_init(struct dwc3 *dwc)
 
 	hw_mode = DWC3_GHWPARAMS0_MODE(dwc->hwparams.hwparams0);
 
-	dev_info(dwc->dev, "nord4-usb: core init: phy setup\n");
 	ret = dwc3_phy_setup(dwc);
 	if (ret)
 		return ret;
@@ -1374,7 +1373,6 @@ int dwc3_core_init(struct dwc3 *dwc)
 
 	dwc3_ulpi_setup(dwc);
 
-	dev_info(dwc->dev, "nord4-usb: core init: get phys\n");
 	if (!dwc->phys_ready) {
 		ret = dwc3_core_get_phy(dwc);
 		if (ret)
@@ -1382,12 +1380,10 @@ int dwc3_core_init(struct dwc3 *dwc)
 		dwc->phys_ready = true;
 	}
 
-	dev_info(dwc->dev, "nord4-usb: core init: phy init\n");
 	ret = dwc3_phy_init(dwc);
 	if (ret)
 		goto err_exit_ulpi;
 
-	dev_info(dwc->dev, "nord4-usb: core init: soft reset\n");
 	ret = dwc3_core_soft_reset(dwc);
 	if (ret)
 		goto err_exit_phy;
@@ -1414,12 +1410,10 @@ int dwc3_core_init(struct dwc3 *dwc)
 
 	dwc3_config_soc_bus(dwc);
 
-	dev_info(dwc->dev, "nord4-usb: core init: phy power on\n");
 	ret = dwc3_phy_power_on(dwc);
 	if (ret)
 		goto err_exit_phy;
 
-	dev_info(dwc->dev, "nord4-usb: core init: event buffers\n");
 	ret = dwc3_event_buffers_setup(dwc);
 	if (ret) {
 		dev_err(dwc->dev, "failed to setup event buffers\n");

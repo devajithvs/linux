@@ -457,26 +457,22 @@ static int snps_eusb2_hsphy_init(struct phy *p)
 	struct snps_eusb2_hsphy *phy = phy_get_drvdata(p);
 	int ret;
 
-	dev_info(&p->dev, "nord4-eusb2: enable regulators\n");
 	ret = regulator_bulk_enable(ARRAY_SIZE(phy->vregs), phy->vregs);
 	if (ret)
 		return ret;
 
-	dev_info(&p->dev, "nord4-eusb2: repeater init\n");
 	ret = phy_init(phy->repeater);
 	if (ret) {
 		dev_err(&p->dev, "repeater init failed: %d\n", ret);
 		goto disable_vreg;
 	}
 
-	dev_info(&p->dev, "nord4-eusb2: enable ref clock\n");
 	ret = clk_bulk_prepare_enable(phy->data->num_clks, phy->clks);
 	if (ret) {
 		dev_err(&p->dev, "failed to enable ref clock: %d\n", ret);
 		goto exit_repeater;
 	}
 
-	dev_info(&p->dev, "nord4-eusb2: phy reset\n");
 	ret = reset_control_assert(phy->phy_reset);
 	if (ret) {
 		dev_err(&p->dev, "failed to assert phy_reset: %d\n", ret);
@@ -491,7 +487,6 @@ static int snps_eusb2_hsphy_init(struct phy *p)
 		goto disable_clks;
 	}
 
-	dev_info(&p->dev, "nord4-eusb2: hpg init sequence\n");
 	ret = phy->data->phy_init(p);
 	if (ret)
 		goto disable_clks;

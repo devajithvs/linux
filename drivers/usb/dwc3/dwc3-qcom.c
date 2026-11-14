@@ -624,20 +624,17 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 
 	qcom->dev = &pdev->dev;
 
-	dev_info(dev, "nord4-usb: qcom probe: get resets\n");
 	qcom->resets = devm_reset_control_array_get_optional_exclusive(dev);
 	if (IS_ERR(qcom->resets)) {
 		return dev_err_probe(&pdev->dev, PTR_ERR(qcom->resets),
 				     "failed to get resets\n");
 	}
 
-	dev_info(dev, "nord4-usb: qcom probe: get clocks\n");
 	ret = devm_clk_bulk_get_all(&pdev->dev, &qcom->clks);
 	if (ret < 0)
 		return dev_err_probe(dev, ret, "failed to get clocks\n");
 	qcom->num_clocks = ret;
 
-	dev_info(dev, "nord4-usb: qcom probe: assert reset\n");
 	ret = reset_control_assert(qcom->resets);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to assert resets, err=%d\n", ret);
@@ -652,7 +649,6 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	dev_info(dev, "nord4-usb: qcom probe: enable clocks\n");
 	ret = clk_bulk_prepare_enable(qcom->num_clocks, qcom->clks);
 	if (ret < 0)
 		return ret;
@@ -672,7 +668,6 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 		goto clk_disable;
 	}
 
-	dev_info(dev, "nord4-usb: qcom probe: setup irqs\n");
 	ret = dwc3_qcom_setup_irq(qcom, pdev);
 	if (ret) {
 		dev_err(dev, "failed to setup IRQs, err=%d\n", ret);
@@ -683,8 +678,6 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 	 * Disable pipe_clk requirement if specified. Used when dwc3
 	 * operates without SSPHY and only HS/FS/LS modes are supported.
 	 */
-	dev_info(dev, "nord4-usb: qcom probe: pipe clk mode (utmi=%d)\n",
-		 device_property_read_bool(dev, "qcom,select-utmi-as-pipe-clk"));
 	ignore_pipe_clk = device_property_read_bool(dev,
 				"qcom,select-utmi-as-pipe-clk");
 	if (ignore_pipe_clk)
@@ -696,7 +689,6 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 		qcom->current_role = USB_ROLE_HOST;
 	} else if (qcom->mode == USB_DR_MODE_PERIPHERAL) {
 		qcom->current_role = USB_ROLE_DEVICE;
-		dev_info(dev, "nord4-usb: qcom probe: vbus override\n");
 		dwc3_qcom_vbus_override_enable(qcom, true);
 	} else {
 		if ((device_property_read_bool(dev, "usb-role-switch")) &&
@@ -713,19 +705,16 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
 	probe_data.res = &res;
 	probe_data.ignore_clocks_and_resets = true;
 	probe_data.properties = DWC3_DEFAULT_PROPERTIES;
-	dev_info(dev, "nord4-usb: qcom probe: core probe\n");
 	ret = dwc3_core_probe(&probe_data);
 	if (ret)  {
 		ret = dev_err_probe(dev, ret, "failed to register DWC3 Core\n");
 		goto clk_disable;
 	}
 
-	dev_info(dev, "nord4-usb: qcom probe: core ok, interconnect\n");
 	ret = dwc3_qcom_interconnect_init(qcom);
 	if (ret)
 		goto remove_core;
 
-	dev_info(dev, "nord4-usb: qcom probe: done\n");
 	wakeup_source = of_property_read_bool(dev->of_node, "wakeup-source");
 	device_init_wakeup(&pdev->dev, wakeup_source);
 
