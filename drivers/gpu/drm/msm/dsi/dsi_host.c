@@ -29,6 +29,7 @@
 #include "dsi_cfg.h"
 #include "msm_dsc_helper.h"
 #include "msm_kms.h"
+#include "msm_nord4_dsc.h"
 #include "msm_gem.h"
 #include "phy/dsi_phy.h"
 
@@ -798,6 +799,10 @@ bool msm_dsi_host_is_wide_bus_enabled(struct mipi_dsi_host *host)
 {
 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
 
+	/* HACK: nord4_dsc_widebus 1 = force on, 2 = force off (F0151, F0153) */
+	if (nord4_dsc_widebus)
+		return nord4_dsc_widebus == 1;
+
 	return msm_host->dsc &&
 		msm_dsi_host_version_geq(msm_host, MSM_DSI_VER_MAJOR_6G,
 					MSM_DSI_6G_VER_MINOR_V2_5_0);
@@ -929,6 +934,7 @@ static void dsi_update_dsc_timing(struct msm_dsi_host *msm_host, bool is_cmd_mod
 	struct drm_dsc_config *dsc = msm_host->dsc;
 	u32 reg, reg_ctrl, reg_ctrl2;
 	u32 slice_per_intf, total_bytes_per_intf;
+	u32 slice_per_pkt;
 	u32 pkt_per_line;
 	u32 eol_byte_num;
 	u32 bytes_per_pkt;
@@ -938,12 +944,18 @@ static void dsi_update_dsc_timing(struct msm_dsi_host *msm_host, bool is_cmd_mod
 	 */
 	slice_per_intf = dsc->slice_count;
 
+	/* HACK: nord4_dsc_* sweep knobs (F0151, F0153) */
+	slice_per_pkt = nord4_dsc_slice_per_pkt ?: msm_host->dsc_slice_per_pkt;
 	total_bytes_per_intf = dsc->slice_chunk_size * slice_per_intf;
-	bytes_per_pkt = dsc->slice_chunk_size * msm_host->dsc_slice_per_pkt;
+	bytes_per_pkt = dsc->slice_chunk_size * slice_per_pkt;
 
-	eol_byte_num = total_bytes_per_intf % 3;
+	eol_byte_num = nord4_dsc_eol < 0 ? total_bytes_per_intf % 3 : nord4_dsc_eol & 3;
 
-	pkt_per_line = slice_per_intf / msm_host->dsc_slice_per_pkt;
+	pkt_per_line = slice_per_intf / slice_per_pkt;
+	if (nord4_dsc_stream == 3)
+		pkt_per_line = slice_per_intf;
+	else if (nord4_dsc_stream == 4)
+		pkt_per_line = 1;
 
 	if (is_cmd_mode) /* packet data type */
 		reg = DSI_COMMAND_COMPRESSION_MODE_CTRL_STREAM0_DATATYPE(MIPI_DSI_DCS_LONG_WRITE);
@@ -1100,6 +1112,15 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 			/* When DSC is enabled, WC = slice_chunk_size * slice_per_pkt + 1 */
 			wc = msm_host->dsc->slice_chunk_size *
 				msm_host->dsc_slice_per_pkt + 1;
+
+		/* HACK: nord4_dsc_stream sweep knob (F0151, F0153) */
+		if (msm_host->dsc) {
+			if (nord4_dsc_stream == 1)
+				wc = msm_host->dsc->slice_chunk_size *
+					msm_host->dsc->slice_count + 1;
+			else if (nord4_dsc_stream == 2)
+				wc = msm_host->dsc->slice_chunk_size + 1;
+		}
 
 		dsi_write(msm_host, REG_DSI_CMD_MDP_STREAM0_CTRL,
 			DSI_CMD_MDP_STREAM0_CTRL_WORD_COUNT(wc) |
@@ -1892,6 +1913,10 @@ static int dsi_populate_dsc_params(struct msm_dsi_host *msm_host, struct drm_dsc
 	dsc->convert_rgb = 1;
 	dsc->vbr_enable = 0;
 
+	/* HACK: nord4_dsc_bpp, else the panel's value (F0151, F0153) */
+	if (nord4_dsc_bpp)
+		dsc->bits_per_pixel = nord4_dsc_bpp;
+
 	drm_dsc_set_const_params(dsc);
 	drm_dsc_set_rc_buf_thresh(dsc);
 
@@ -1901,7 +1926,12 @@ static int dsi_populate_dsc_params(struct msm_dsi_host *msm_host, struct drm_dsc
 	 * legacy one. The DPU programs its encoder from these same fields, so
 	 * both ends must come from the one table.
 	 */
-	if (dsc->dsc_version_minor >= 2)
+	/* HACK: nord4_dsc_rc_table 1 = pre-SCR, 2 = 1.2 4:4:4 (F0151, F0153) */
+	if (nord4_dsc_rc_table == 1)
+		ret = drm_dsc_setup_rc_params(dsc, DRM_DSC_1_1_PRE_SCR);
+	else if (nord4_dsc_rc_table == 2)
+		ret = drm_dsc_setup_rc_params(dsc, DRM_DSC_1_2_444);
+	else if (dsc->dsc_version_minor >= 2)
 		ret = drm_dsc_setup_rc_params(dsc, DRM_DSC_1_2_444);
 	else
 		ret = drm_dsc_setup_rc_params(dsc, DRM_DSC_1_1_PRE_SCR);

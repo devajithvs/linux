@@ -110,6 +110,7 @@ msm-display-$(CONFIG_DRM_MSM_KMS) += \
 	disp/msm_disp_snapshot_util.o \
 
 msm-y += \
+	msm_nord4_dsc.o \
 	msm_debugfs.o \
 	msm_drv.o \
 	msm_fence.o \

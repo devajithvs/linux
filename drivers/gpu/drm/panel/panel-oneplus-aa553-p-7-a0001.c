@@ -19,6 +19,16 @@
 
 #include <drm/display/drm_dsc.h>
 #include <drm/display/drm_dsc_helper.h>
+
+/*
+ * HACK: the runtime sweep knobs, defined and exported by the msm driver
+ * (drivers/gpu/drm/msm/msm_nord4_dsc.c); F0151, F0153.  They default to 0,
+ * today's behaviour, and go away once the picture is right.
+ */
+extern uint nord4_dsc_page0;
+extern uint nord4_dsc_pps_when;
+extern uint nord4_dsc_comp_dcs;
+extern uint nord4_dsc_readback;
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_modes.h>
 #include <drm/drm_panel.h>
@@ -72,6 +82,26 @@ static void aa553_reset(struct aa553_panel *ctx)
  * The downstream table's 0x91 short write is the panel's own DSC
  * configuration; the VESA PPS itself is sent by the driver in prepare().
  */
+/*
+ * HACK: the PPS and the DCS 0x07 compression-mode write, with the knobs that
+ * move them (nord4_dsc_pps_when, nord4_dsc_comp_dcs); F0151, F0153.
+ */
+static void aa553_send_pps(struct aa553_panel *ctx,
+			   struct mipi_dsi_multi_context *dsi_ctx)
+{
+	struct drm_dsc_picture_parameter_set pps;
+
+	drm_dsc_pps_payload_pack(&pps, &ctx->dsc);
+	mipi_dsi_picture_parameter_set_multi(dsi_ctx, &pps);
+
+	/* the vendor table never sends the standard DCS 0x07 */
+	if (!nord4_dsc_comp_dcs)
+		mipi_dsi_compression_mode_ext_multi(dsi_ctx, true,
+						    MIPI_DSI_COMPRESSION_DSC, 0);
+
+	mipi_dsi_msleep(dsi_ctx, 28);
+}
+
 static int aa553_on(struct aa553_panel *ctx)
 {
 	struct mipi_dsi_device *dsi = ctx->dsi;
@@ -180,6 +210,9 @@ static int aa553_on(struct aa553_panel *ctx)
 				     0x00, 0x58, 0x00, 0x20, 0x00, 0x20, 0x10, 0x00, 0x58, 0x00,
 				     0x20, 0x03, 0xd4, 0x10, 0x00, 0x58, 0x00, 0x20, 0x0b, 0x38,
 				     0x10);
+	/* HACK: the vendor table's page-0 select before the first 0xb4 */
+	if (nord4_dsc_page0)
+		aa553_switch_page(&dsi_ctx, 0x00);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb4,
 				     0x00, 0x00, 0x00, 0xc0, 0x00, 0xdc, 0x00, 0xdc, 0x01, 0x10,
 				     0x01, 0x10, 0x01, 0xa0, 0x01, 0xa0, 0x02, 0xb8, 0x02, 0xb8,
@@ -201,8 +234,13 @@ static int aa553_on(struct aa553_panel *ctx)
 				     0x15, 0xe0, 0x15, 0xe0, 0x15, 0xe0, 0x15, 0xe0, 0x15, 0xe0,
 				     0x15, 0xe0, 0x15, 0xe0, 0x15, 0xe0);
 
+	/* HACK: nord4_dsc_pps_when 1 = before sleep-out, 2 = before display-on */
+	if (nord4_dsc_pps_when == 1)
+		aa553_send_pps(ctx, &dsi_ctx);
 	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
 	mipi_dsi_msleep(&dsi_ctx, 120);
+	if (nord4_dsc_pps_when == 2)
+		aa553_send_pps(ctx, &dsi_ctx);
 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
 
 	return dsi_ctx.accum_err;
@@ -237,7 +275,6 @@ static int aa553_off(struct aa553_panel *ctx)
 static int aa553_prepare(struct drm_panel *panel)
 {
 	struct aa553_panel *ctx = to_aa553_panel(panel);
-	struct drm_dsc_picture_parameter_set pps;
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 	int ret;
 
@@ -267,11 +304,9 @@ static int aa553_prepare(struct drm_panel *panel)
 	if (ret < 0)
 		goto err_disable;
 
-	drm_dsc_pps_payload_pack(&pps, &ctx->dsc);
-	mipi_dsi_picture_parameter_set_multi(&dsi_ctx, &pps);
-	mipi_dsi_compression_mode_ext_multi(&dsi_ctx, true,
-					    MIPI_DSI_COMPRESSION_DSC, 0);
-	mipi_dsi_msleep(&dsi_ctx, 28);
+	/* HACK: nord4_dsc_pps_when 0 = after display-on, today's order */
+	if (nord4_dsc_pps_when == 0)
+		aa553_send_pps(ctx, &dsi_ctx);
 
 	if (dsi_ctx.accum_err < 0) {
 		ret = dsi_ctx.accum_err;
@@ -296,9 +331,31 @@ err_disable_vddio:
 	return ret;
 }
 
+/* HACK: the DDIC's own status, so the sweep needs no eyes (F0151, F0153). */
+static void aa553_readback(struct aa553_panel *ctx)
+{
+	static const u8 regs[] = { 0x0a, 0x0c, 0x0d, 0x0e, 0x0f, 0x05 };
+	u8 val;
+	int i, ret;
+
+	/* a DCS read is a low-power-mode transfer */
+	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+	for (i = 0; i < ARRAY_SIZE(regs); i++) {
+		val = 0xff;
+		ret = mipi_dsi_dcs_read(ctx->dsi, regs[i], &val, 1);
+		pr_info("nord4-dsc: dcs 0x%02x = 0x%02x ret=%d\n",
+			regs[i], val, ret);
+	}
+	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+}
+
 static int aa553_unprepare(struct drm_panel *panel)
 {
 	struct aa553_panel *ctx = to_aa553_panel(panel);
+
+	/* HACK: read the panel's state while the link and the panel are up */
+	if (nord4_dsc_readback)
+		aa553_readback(ctx);
 
 	aa553_off(ctx);
 	ctx->prepared = false;
