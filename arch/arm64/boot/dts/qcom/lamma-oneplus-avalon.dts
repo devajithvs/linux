@@ -301,6 +301,29 @@
 	};
 
 	/*
+	 * PM8550VS instance c: the display's own 1.2 V rail. The downstream
+	 * node runs 1200000-1250000 uV, initialises at 1.2 V and holds itself
+	 * on with a 200 mA proxy consumer (qcom/cliffs-regulators.dtsi:855-879),
+	 * so downstream has it up from boot whether the display is on or not;
+	 * the display tree names it as its vdd-supply
+	 * (display/cliffs-sde-display.dtsi:74). Mainline's msm driver has no
+	 * such supply to bind it to, so it is kept on the way downstream keeps
+	 * it.
+	 */
+	regulators-4 {
+		compatible = "qcom,pm8550vs-rpmh-regulators";
+		qcom,pmic-id = "c";
+
+		vreg_l3c_1p2: ldo3 {
+			regulator-name = "vreg_l3c_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1250000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+		};
+	};
+
+	/*
 	 * The PMR735A (instance e) carries the only rail the WCN6750 Bluetooth
 	 * path needs from it: S3E, the chip's 2.2 V PA supply. This is the one
 	 * PMR735A resource the board describes so far; the rest of that PMIC
