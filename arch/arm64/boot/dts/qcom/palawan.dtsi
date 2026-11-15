@@ -3075,7 +3075,7 @@
 
 		usb_dp_qmpphy: phy@88e8000 {
 			compatible = "qcom,palawan-qmp-usb3-dp-phy",
-				     "qcom,palawan-qmp-usb3-dp-phy",
+				     "qcom,palawan-qmp-usb3-dp-phy";
 			reg = <0 0x088e8000 0 0x3000>;
 
 			clocks = <&gcc GCC_USB3_PRIM_PHY_AUX_CLK>,
