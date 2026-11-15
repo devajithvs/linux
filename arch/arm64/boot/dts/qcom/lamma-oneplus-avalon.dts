@@ -20,6 +20,7 @@
 
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/linux-event-codes.h>
+#include <dt-bindings/leds/common.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
 #include "lamma.dtsi"
 #include "pm7550.dtsi" /* PMXR2230 */
@@ -839,4 +840,38 @@
 	linux,code = <KEY_VOLUMEUP>;
 
 	status = "okay";
+};
+
+/*
+ * The rear flash is the PMXR2230's flash-LED module, which the downstream
+ * board leaves enabled (vendor/qcom/proprietary/devicetree/qcom/cliffs-mtp.dtsi:104-106)
+ * and the stock camera overlays drive as two LEDs of two channels each: the
+ * wide camera's flash is channels 1+2 and the ultrawide one's is 3+4
+ * (vendor/qcom/proprietary/camera-devicetree/oplus/avalon_camera_overlay_common.dtsi:5-24).
+ * Both of those overlays select the module's all-channel switch
+ * (pmxr2230_switch2, mask 15), not the reference board's 1+4 and 2+3 pairs,
+ * so the camera's pairs are the ones described here. Only the torch is
+ * described — no flash-max-* properties, so the strobe path stays
+ * unreachable — and each LED is limited to a tenth of the downstream torch
+ * current of 500 mA per channel (qcom/pmxr2230.dtsi:167-201), which the
+ * driver splits across the two channels.
+ */
+&pm7550_flash {
+	status = "okay";
+
+	led-0 {
+		function = LED_FUNCTION_FLASH;
+		color = <LED_COLOR_ID_WHITE>;
+		function-enumerator = <0>;
+		led-sources = <1>, <2>;
+		led-max-microamp = <50000>;
+	};
+
+	led-1 {
+		function = LED_FUNCTION_FLASH;
+		color = <LED_COLOR_ID_WHITE>;
+		function-enumerator = <1>;
+		led-sources = <3>, <4>;
+		led-max-microamp = <50000>;
+	};
 };
