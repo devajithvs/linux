@@ -86,6 +86,17 @@
 
 	aliases {
 		display0 = &framebuffer0;
+		/*
+		 * The Bluetooth UART, uart10, is neither the console nor a
+		 * serial port, so it gets no "serial" alias. qcom_geni_serial
+		 * asks for "serial" first and falls back to "hsuart" when the
+		 * node has none (drivers/tty/serial/qcom_geni_serial.c:1821-1823);
+		 * without either the probe is rejected before the port exists
+		 * ("Invalid line -19"), so no tty and no serdev either.
+		 * Downstream aliases the same instance the same way:
+		 * hsuart0 = &qupv3_se10_4uart (cliffs.dtsi:48-53).
+		 */
+		hsuart0 = &uart10;
 	};
 
 	chosen {
