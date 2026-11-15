@@ -280,6 +280,7 @@ config SND_SOC_ALL_CODECS
 	imply SND_SOC_TAS6424
 	imply SND_SOC_TAS675X
 	imply SND_SOC_TDA7419
+	imply SND_SOC_TFA987X
 	imply SND_SOC_TFA9879
 	imply SND_SOC_TFA989X
 	imply SND_SOC_TLV320ADC3XXX
@@ -2276,6 +2277,17 @@ config SND_SOC_TDA7419
 	tristate "ST TDA7419 audio processor"
 	depends on I2C
 	select REGMAP_I2C
+
+config SND_SOC_TFA987X
+	tristate "NXP Semiconductors TFA9873/TFA9874 amplifiers"
+	depends on I2C
+	select REGMAP_I2C
+	help
+	  Enable support for the NXP TFA9873 and TFA9874 smart speaker
+	  amplifiers. The driver brings the device out of reset, reports
+	  which of the two parts is fitted and registers the playback DAI;
+	  the DSP configuration container that the speaker protection runs
+	  from is not loaded by it.
 
 config SND_SOC_TFA9879
 	tristate "NXP Semiconductors TFA9879 amplifier"
