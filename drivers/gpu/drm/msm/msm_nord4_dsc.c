@@ -23,20 +23,10 @@ module_param_named(nord4_dsc_rc_table, nord4_dsc_rc_table, uint, 0644);
 MODULE_PARM_DESC(nord4_dsc_rc_table, "0 = by DSC version, 1 = DSC 1.1 pre-SCR, 2 = DSC 1.2 4:4:4");
 EXPORT_SYMBOL_GPL(nord4_dsc_rc_table);
 
-uint nord4_dsc_page0;
-module_param_named(nord4_dsc_page0, nord4_dsc_page0, uint, 0644);
-MODULE_PARM_DESC(nord4_dsc_page0, "1 = write the vendor table's page-0 select before the first 0xb4");
-EXPORT_SYMBOL_GPL(nord4_dsc_page0);
-
 uint nord4_dsc_pps_when;
 module_param_named(nord4_dsc_pps_when, nord4_dsc_pps_when, uint, 0644);
 MODULE_PARM_DESC(nord4_dsc_pps_when, "0 = after display-on, 1 = before sleep-out, 2 = before display-on, 3 = also in enable");
 EXPORT_SYMBOL_GPL(nord4_dsc_pps_when);
-
-uint nord4_dsc_comp_dcs;
-module_param_named(nord4_dsc_comp_dcs, nord4_dsc_comp_dcs, uint, 0644);
-MODULE_PARM_DESC(nord4_dsc_comp_dcs, "1 = do not send the DCS 0x07 set-compression-mode write");
-EXPORT_SYMBOL_GPL(nord4_dsc_comp_dcs);
 
 uint nord4_dsc_bpp;
 module_param_named(nord4_dsc_bpp, nord4_dsc_bpp, uint, 0644);

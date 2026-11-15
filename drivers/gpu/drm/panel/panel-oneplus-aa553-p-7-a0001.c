@@ -25,9 +25,7 @@
  * (drivers/gpu/drm/msm/msm_nord4_dsc.c); F0151, F0153.  They default to 0,
  * today's behaviour, and go away once the picture is right.
  */
-extern uint nord4_dsc_page0;
 extern uint nord4_dsc_pps_when;
-extern uint nord4_dsc_comp_dcs;
 extern uint nord4_dsc_readback;
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_modes.h>
@@ -83,8 +81,9 @@ static void aa553_reset(struct aa553_panel *ctx)
  * configuration; the VESA PPS itself is sent by the driver in prepare().
  */
 /*
- * HACK: the PPS and the DCS 0x07 compression-mode write, with the knobs that
- * move them (nord4_dsc_pps_when, nord4_dsc_comp_dcs); F0151, F0153.
+ * The VESA PPS.  The standard DCS 0x07 compression-mode write is not sent:
+ * the vendor's table never contains it and the DDIC's own status byte (0x03)
+ * reads its error value when it is sent (F0160 §4, F0168).
  */
 static void aa553_send_pps(struct aa553_panel *ctx,
 			   struct mipi_dsi_multi_context *dsi_ctx)
@@ -93,11 +92,6 @@ static void aa553_send_pps(struct aa553_panel *ctx,
 
 	drm_dsc_pps_payload_pack(&pps, &ctx->dsc);
 	mipi_dsi_picture_parameter_set_multi(dsi_ctx, &pps);
-
-	/* the vendor table never sends the standard DCS 0x07 */
-	if (!nord4_dsc_comp_dcs)
-		mipi_dsi_compression_mode_ext_multi(dsi_ctx, true,
-						    MIPI_DSI_COMPRESSION_DSC, 0);
 
 	mipi_dsi_msleep(dsi_ctx, 28);
 }
@@ -210,9 +204,12 @@ static int aa553_on(struct aa553_panel *ctx)
 				     0x00, 0x58, 0x00, 0x20, 0x00, 0x20, 0x10, 0x00, 0x58, 0x00,
 				     0x20, 0x03, 0xd4, 0x10, 0x00, 0x58, 0x00, 0x20, 0x0b, 0x38,
 				     0x10);
-	/* HACK: the vendor table's page-0 select before the first 0xb4 */
-	if (nord4_dsc_page0)
-		aa553_switch_page(&dsi_ctx, 0x00);
+	/*
+	 * The vendor's table selects page 0 again right before the decoder
+	 * tables (dsi-panel-AA553-P-7-A0001-dsc-cmd.dtsi:76); without it the
+	 * first 0xb4 lands in the page the 0xba write left.
+	 */
+	aa553_switch_page(&dsi_ctx, 0x00);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb4,
 				     0x00, 0x00, 0x00, 0xc0, 0x00, 0xdc, 0x00, 0xdc, 0x01, 0x10,
 				     0x01, 0x10, 0x01, 0xa0, 0x01, 0xa0, 0x02, 0xb8, 0x02, 0xb8,

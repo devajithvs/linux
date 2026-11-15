@@ -19,11 +19,9 @@ extern uint nord4_dsc_slice_per_pkt;
 /* 0 = pick by dsc_version_minor (1.2 today), 1 = DSC 1.1 pre-SCR, 2 = DSC 1.2 4:4:4 */
 extern uint nord4_dsc_rc_table;
 /* 0 = no extra write, 1 = the vendor table's page-0 select between 0xba and the first 0xb4 */
-extern uint nord4_dsc_page0;
 /* 0 = after display-on (today), 1 = before sleep-out, 2 = before display-on, 3 = again in panel enable */
 extern uint nord4_dsc_pps_when;
 /* 0 = send the DCS 0x07 set-compression-mode write (today), 1 = do not send it */
-extern uint nord4_dsc_comp_dcs;
 /* 0 = the panel's 8 bpp (0x80 in 4.4 fixed point), else that raw value */
 extern uint nord4_dsc_bpp;
 /* 0 = today's stream registers, 1 = wc = line bytes + 1, 2 = wc = slice bytes + 1,
