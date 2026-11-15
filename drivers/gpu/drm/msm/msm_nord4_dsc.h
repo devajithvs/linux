@@ -38,5 +38,7 @@ extern uint nord4_dsc_widebus;
 extern uint nord4_dsc_merge;
 /* 0 = no readback, 1 = read the DDIC's status registers at every panel unprepare */
 extern uint nord4_dsc_readback;
+/* 0 = quiet, 1 = dump the DSI/DPU/DSC registers at every mode set */
+extern uint nord4_dsc_dump;
 
 #endif

@@ -67,3 +67,8 @@ uint nord4_dsc_readback;
 module_param_named(nord4_dsc_readback, nord4_dsc_readback, uint, 0644);
 MODULE_PARM_DESC(nord4_dsc_readback, "1 = read the DDIC's status registers at every unprepare");
 EXPORT_SYMBOL_GPL(nord4_dsc_readback);
+
+uint nord4_dsc_dump;
+module_param_named(nord4_dsc_dump, nord4_dsc_dump, uint, 0644);
+MODULE_PARM_DESC(nord4_dsc_dump, "1 = dump the DSI/DPU/DSC registers at every mode set");
+EXPORT_SYMBOL_GPL(nord4_dsc_dump);

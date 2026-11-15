@@ -24,6 +24,7 @@
 #include "dpu_hw_sspp.h"
 #include "dpu_hw_util.h"
 #include "dpu_trace.h"
+#include "msm_nord4_dsc.h"
 #include "dpu_crtc.h"
 #include "dpu_vbif.h"
 #include "dpu_plane.h"
@@ -1626,6 +1627,18 @@ static void dpu_plane_atomic_update(struct drm_plane *plane,
 	pdpu->is_error = false;
 
 	DPU_DEBUG_PLANE(pdpu, "\n");
+
+	/* HACK: what the DPU will fetch, for the iova-0 fault (F0151, F0153) */
+	if (nord4_dsc_dump && new_state->fb) {
+		struct dpu_plane_state *nps = to_dpu_plane_state(new_state);
+
+		dpu_format_populate_addrs(new_state->fb, &nps->layout);
+		pr_info("nord4-dsc: plane %d fb %u fmt %p4cc %ux%u addr0 0x%llx\n",
+			plane->base.id, new_state->fb->base.id,
+			&new_state->fb->format->format, new_state->fb->width,
+			new_state->fb->height,
+			(unsigned long long)nps->layout.plane_addr[0]);
+	}
 
 	if (!new_state->visible) {
 		_dpu_plane_atomic_disable(plane);

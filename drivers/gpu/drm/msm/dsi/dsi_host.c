@@ -1011,6 +1011,26 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 
 	DBG("");
 
+	/* HACK: the DSI state before we program anything, i.e. the bootloader's */
+	if (nord4_dsc_dump)
+		pr_info("nord4-dsc: dsi before CTRL=0x%08x CLK_CTRL=0x%08x LANE_CTRL=0x%08x "
+			"ACTIVE_H=0x%08x ACTIVE_V=0x%08x TOTAL=0x%08x TRIG=0x%08x "
+			"STREAM0_CTRL=0x%08x STREAM0_TOTAL=0x%08x COMP_CTRL=0x%08x "
+			"COMP_CTRL2=0x%08x MDP_CTRL2=0x%08x VERSION=0x%08x\\n",
+			dsi_read(msm_host, REG_DSI_CTRL),
+			dsi_read(msm_host, REG_DSI_CLK_CTRL),
+			dsi_read(msm_host, REG_DSI_LANE_CTRL),
+			dsi_read(msm_host, REG_DSI_ACTIVE_H),
+			dsi_read(msm_host, REG_DSI_ACTIVE_V),
+			dsi_read(msm_host, REG_DSI_TOTAL),
+			dsi_read(msm_host, REG_DSI_TRIG_CTRL),
+			dsi_read(msm_host, REG_DSI_CMD_MDP_STREAM0_CTRL),
+			dsi_read(msm_host, REG_DSI_CMD_MDP_STREAM0_TOTAL),
+			dsi_read(msm_host, REG_DSI_COMMAND_COMPRESSION_MODE_CTRL),
+			dsi_read(msm_host, REG_DSI_COMMAND_COMPRESSION_MODE_CTRL2),
+			dsi_read(msm_host, REG_DSI_CMD_MODE_MDP_CTRL2),
+			dsi_read(msm_host, REG_DSI_VERSION));
+
 	/*
 	 * For bonded DSI mode, the current DRM mode has
 	 * the complete width of the panel. Since, the complete
@@ -1132,6 +1152,37 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 		dsi_write(msm_host, REG_DSI_CMD_MDP_STREAM0_TOTAL,
 			DSI_CMD_MDP_STREAM0_TOTAL_H_TOTAL(hdisplay) |
 			DSI_CMD_MDP_STREAM0_TOTAL_V_TOTAL(mode->vdisplay));
+	}
+
+	/* HACK: the register state our mode set leaves, for the golden diff */
+	if (nord4_dsc_dump) {
+		static const struct {
+			const char *name;
+			u32 reg;
+		} dump[] = {
+			{ "CTRL", REG_DSI_CTRL },
+			{ "CLK_CTRL", REG_DSI_CLK_CTRL },
+			{ "LANE_CTRL", REG_DSI_LANE_CTRL },
+			{ "ACTIVE_H", REG_DSI_ACTIVE_H },
+			{ "ACTIVE_V", REG_DSI_ACTIVE_V },
+			{ "TOTAL", REG_DSI_TOTAL },
+			{ "TRIG_CTRL", REG_DSI_TRIG_CTRL },
+			{ "CMD_MDP_STREAM0_CTRL", REG_DSI_CMD_MDP_STREAM0_CTRL },
+			{ "CMD_MDP_STREAM0_TOTAL", REG_DSI_CMD_MDP_STREAM0_TOTAL },
+			{ "CMD_COMPRESSION_MODE_CTRL", REG_DSI_COMMAND_COMPRESSION_MODE_CTRL },
+			{ "CMD_COMPRESSION_MODE_CTRL2", REG_DSI_COMMAND_COMPRESSION_MODE_CTRL2 },
+			{ "CMD_MODE_MDP_CTRL2", REG_DSI_CMD_MODE_MDP_CTRL2 },
+			{ "VERSION", REG_DSI_VERSION },
+		};
+		int k;
+
+		for (k = 0; k < ARRAY_SIZE(dump); k++)
+			pr_info("nord4-dsc: dsi %s = 0x%08x\n", dump[k].name,
+				dsi_read(msm_host, dump[k].reg));
+		pr_info("nord4-dsc: dsi mode_flags 0x%lx cmd=%d hdisplay=%u vdisplay=%u\n",
+			(unsigned long)msm_host->mode_flags,
+			!(msm_host->mode_flags & MIPI_DSI_MODE_VIDEO), hdisplay,
+			mode->vdisplay);
 	}
 }
 
