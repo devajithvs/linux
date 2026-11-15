@@ -1,0 +1,740 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * OnePlus Nord 4 (Avalon), SM7675 / Lamma.
+ *
+ * Scope: serial-less simple-framebuffer console, ramoops, the USB gadget
+ * controller in peripheral mode, the ADSP/PMIC GLINK battery path, the
+ * WCN6750 Wi-Fi and Bluetooth path over the WPSS remoteproc, and the
+ * Adreno 732 GPU. Display and SD stay disabled. The battery readout, the
+ * Wi-Fi interface and the GPU probe have been exercised on hardware; the
+ * charge-ceiling write and a Wi-Fi scan have not.
+ *
+ * Electrical values are from the downstream OnePlus device tree
+ * (android_kernel_modules_and_devicetree_oneplus_sm7675, branch
+ * oneplus/sm7675_b_16.0.0_nord_4, commit 150f7f8f3354dc680da90e83788bd25d9b983739),
+ * not from the QRD reference board.
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+#include "lamma.dtsi"
+#include "pm7550ba.dtsi"
+#include "pmr735a.dtsi"
+#include "pmk8550.dtsi"
+
+/ {
+	model = "OnePlus Nord 4 (Avalon)";
+	compatible = "oneplus,avalon", "qcom,lamma";
+	chassis-type = "handset";
+
+	/*
+	 * Bootloader selection properties, copied from the shipped Avalon
+	 * dtbo entry: qcom,msm-id 632 (0x278) for Lamma/Cliffs 7, board-id 8,
+	 * and the pmic-id of eight 32-bit cells ending in 0x4c. ABL reads
+	 * pmic-id-size as the number of u32 cells per entry and skips the
+	 * PMIC match when the property length is not a multiple of it.
+	 */
+	qcom,msm-id = <0x278 0x10000>;
+	qcom,board-id = <0x08 0x00>;
+	qcom,pmic-id-size = <8>;
+	qcom,pmic-id = <0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x4c>;
+
+	/*
+	 * Lamma dtsi ships a placeholder memory@a0000000; this bootloader
+	 * looks up the node named exactly "memory" and rewrites its reg with
+	 * the DDR map, so the placeholder is dropped rather than left dead.
+	 */
+	/delete-node/ memory@a0000000;
+
+	/* The bootloader rewrites reg with the real DDR size. */
+	memory {
+		device_type = "memory";
+		reg = <0 0 0 0>;
+	};
+
+	aliases {
+		display0 = &framebuffer0;
+	};
+
+	chosen {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		stdout-path = "display0";
+
+		/*
+		 * The bootloader's splash buffer. Panel is 1240x2772
+		 * (dsi-panel-AA553-P-7-A0001-dsc-cmd.dtsi in the downstream
+		 * display tree); the buffer is 32 bpp, so 4960 bytes per row.
+		 */
+		framebuffer0: framebuffer@e3940000 {
+			compatible = "simple-framebuffer";
+			reg = <0 0xe3940000 0 (1240 * 2772 * 4)>;
+			width = <1240>;
+			height = <2772>;
+			stride = <(1240 * 4)>;
+			format = "a8r8g8b8";
+		};
+	};
+};
+
+&apps_rsc {
+	regulators-0 {
+		compatible = "qcom,pm7550-rpmh-regulators";
+		qcom,pmic-id = "b";
+
+		/*
+		 * S1B: WCN6750 WLAN vdd-1.8-xo and BT vddrfa1p7. 1856000-2040000 uV,
+		 * init 1856000 (downstream qcom/cliffs-regulators.dtsi:344-346; the
+		 * consumers are qca6750/vdd-1.8-xo at cliffs-qca6750.dtsi:84 and
+		 * bt-vdd-rfa1 at cliffs-qca6750-bt.dtsi:35). Neither the ath11k nor
+		 * the hci_qca probe runs before the WPSS firmware, so the rail is held
+		 * on at the downstream boot voltage.
+		 */
+		vreg_s1b_2p04: smps1 {
+			regulator-name = "vreg_s1b_2p04";
+			regulator-min-microvolt = <1856000>;
+			regulator-max-microvolt = <2040000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+		};
+
+		/*
+		 * S2B: WLAN/BT vdd-1.3-rfa on the downstream board and the parent
+		 * rail of UFS vccq. 1256000-1408000 uV, init 1256000
+		 * (downstream qcom/cliffs-regulators.dtsi:358-364). Mainline has no
+		 * consumer for the UFS parent vote, so the rail is held on.
+		 */
+		vreg_s2b_1p4: smps2 {
+			regulator-name = "vreg_s2b_1p4";
+			regulator-min-microvolt = <1256000>;
+			regulator-max-microvolt = <1408000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+		};
+
+		/*
+		 * S3B: WCN6750 WLAN vdd-cx-mx and BT vddaon, vddbtcxmx,
+		 * vddrfacmn and vddrfa0p8. 968000-1040000 uV, init 984000
+		 * (downstream qcom/cliffs-regulators.dtsi:377-379; the consumers are
+		 * cliffs-qca6750.dtsi:82 and cliffs-qca6750-bt.dtsi:31-34). Held on
+		 * for the same reason as S1B.
+		 */
+		vreg_s3b_1p04: smps3 {
+			regulator-name = "vreg_s3b_1p04";
+			regulator-min-microvolt = <968000>;
+			regulator-max-microvolt = <1040000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+		};
+
+		/* L2B: USB HS PHY vdd. 880000-950000 uV, init 880000. */
+		vreg_l2b_0p95: ldo2 {
+			regulator-name = "vreg_l2b_0p95";
+			regulator-min-microvolt = <880000>;
+			regulator-max-microvolt = <950000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* L3B: USB3-DP PHY vdda-pll. 880000-920000 uV. */
+		vreg_l3b_0p92: ldo3 {
+			regulator-name = "vreg_l3b_0p92";
+			regulator-min-microvolt = <880000>;
+			regulator-max-microvolt = <920000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* L4B: USB HS PHY vdda12 and USB3-DP PHY vdda-phy. 1.2 V. */
+		vreg_l4b_1p2: ldo4 {
+			regulator-name = "vreg_l4b_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/*
+		 * L5B: UFS vddp-ref-clk. 1.2 V, init 1200000 (downstream
+		 * qcom/cliffs-regulators.dtsi:479-487). Mainline has no consumer, so
+		 * the rail is held on for the UFS reset pull-up.
+		 */
+		vreg_l5b_1p2: ldo5 {
+			regulator-name = "vreg_l5b_1p2";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+		};
+
+		/* L7B: eUSB2 repeater vdd18. 1.8 V. */
+		vreg_l7b_1p8: ldo7 {
+			regulator-name = "vreg_l7b_1p8";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/*
+		 * L12B: UFS vcc. The PON sets 2.4 V or 2.96 V by UFS mode, so the
+		 * downstream node has no min/max (qcom/cliffs-regulators.dtsi:602-616).
+		 */
+		vreg_l12b: ldo12 {
+			regulator-name = "vreg_l12b";
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* L17B: eUSB2 repeater vdd3. 2700000-3300000 uV, init 3104000. */
+		vreg_l17b_3p3: ldo17 {
+			regulator-name = "vreg_l17b_3p3";
+			regulator-min-microvolt = <2700000>;
+			regulator-max-microvolt = <3300000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+	};
+
+	/*
+	 * PM8550VS instance d holds the two UFS rails that are not on the "b"
+	 * PMIC. The SPMI node itself stays disabled as in the shipped Avalon
+	 * dtbo entry 1 (and in downstream qcom/cliffs-pmic-overlay.dtsi:26);
+	 * these are RPMh resources, and their voltages are the downstream
+	 * qcom/cliffs-regulators.dtsi values.
+	 */
+	regulators-2 {
+		compatible = "qcom,pm8550vs-rpmh-regulators";
+		qcom,pmic-id = "d";
+
+		/* L1D: UFS PHY vdda-phy. 866000-958000 uV, init 912000. */
+		vreg_l1d_0p96: ldo1 {
+			regulator-name = "vreg_l1d_0p96";
+			regulator-min-microvolt = <866000>;
+			regulator-max-microvolt = <958000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/* L3D: UFS vccq and vccq-shutdown. 1140000-1260000 uV, init 1200000. */
+		vreg_l3d_1p28: ldo3 {
+			regulator-name = "vreg_l3d_1p28";
+			regulator-min-microvolt = <1140000>;
+			regulator-max-microvolt = <1260000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+	};
+
+	/*
+	 * The PMR735A (instance e) carries the only rail the WCN6750 Bluetooth
+	 * path needs from it: S3E, the chip's 2.2 V PA supply. This is the one
+	 * PMR735A resource the board describes so far; the rest of that PMIC
+	 * belongs to the display, camera and codec paths, which stay disabled.
+	 */
+	regulators-3 {
+		compatible = "qcom,pmr735a-rpmh-regulators";
+		qcom,pmic-id = "e";
+
+		/*
+		 * S3E: BT bt-vdd-ipa-2p2. 1600000-2400000 uV, init 1600000
+		 * (downstream qcom/cliffs-regulators.dtsi:326-332; the consumer is
+		 * bt-vdd-ipa-2p2 at cliffs-qca6750-bt.dtsi:37). hci_qca enables it
+		 * with the other BT rails when the serdev probes, so it needs no
+		 * regulator-always-on.
+		 */
+		vreg_s3e_2p4: smps3 {
+			regulator-name = "vreg_s3e_2p4";
+			regulator-min-microvolt = <1600000>;
+			regulator-max-microvolt = <2400000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+	};
+};
+
+&pm7550ba_eusb2_repeater {
+	vdd3-supply = <&vreg_l17b_3p3>;
+	vdd18-supply = <&vreg_l7b_1p8>;
+};
+
+&reserved_memory {
+	/*
+	 * The bootloader splash carveout, same base and size as the shipped
+	 * Avalon dtbo. The downstream display node is named splash_region;
+	 * ABL powers the display down if it is not.
+	 */
+	splash_region: splash_region@e3940000 {
+		reg = <0 0xe3940000 0 0x2b00000>;
+		no-map;
+	};
+
+	/*
+	 * First free range above the splash carveout: [0xe1d40000, 0xf3800000)
+	 * is reserved by neither the stock 1001 base DTB nor the Avalon dtbo.
+	 * Size and buffer split are the downstream ramoops_region values.
+	 */
+	ramoops@e6440000 {
+		compatible = "ramoops";
+		reg = <0 0xe6440000 0 0x240000>;
+		console-size = <0x40000>;
+		pmsg-size = <0x200000>;
+		mem-type = <2>;
+	};
+};
+
+/*
+ * The board's fixed clocks are declared without a rate in lamma.dtsi/palawan.dtsi,
+ * as on every Qualcomm SoC dtsi, and of_fixed_clk_setup() refuses a node without
+ * clock-frequency (drivers/clk/clk-fixed-rate.c:168), so without these the XO tree
+ * has no provider at all: RPMH_CXO_CLK and everything below it read 0 Hz, and the
+ * eUSB2 PHY rejects its "ref" clock (F0024). 76.8 MHz CXO and 32 kHz sleep clock
+ * are the downstream OnePlus cliffs values
+ * (android_kernel_modules_and_devicetree_oneplus_sm7675, branch
+ * oneplus/sm7675_b_16.0.0_nord_4, commit 150f7f8f3354dc680da90e83788bd25d9b983739,
+ * kernel_platform/qcom/proprietary/devicetree/qcom/cliffs.dtsi:1144-1155).
+ */
+&xo_board {
+	clock-frequency = <76800000>;
+};
+
+&sleep_clk {
+	clock-frequency = <32000>;
+};
+
+&usb_1 {
+	dr_mode = "peripheral";
+	maximum-speed = "high-speed";
+
+	status = "okay";
+};
+
+&usb_1_hsphy {
+	vdd-supply = <&vreg_l2b_0p95>;
+	vdda12-supply = <&vreg_l4b_1p2>;
+
+	phys = <&pm7550ba_eusb2_repeater>;
+
+	status = "okay";
+};
+
+&usb_dp_qmpphy {
+	vdda-phy-supply = <&vreg_l4b_1p2>;
+	vdda-pll-supply = <&vreg_l3b_0p92>;
+
+	status = "okay";
+};
+
+/*
+ * UFS. The node set and every electrical value are the downstream Cliffs MTP
+ * board's (android_kernel_modules_and_devicetree_oneplus_sm7675, branch
+ * oneplus/sm7675_b_16.0.0_nord_4, commit 150f7f8f3354dc680da90e83788bd25d9b983739,
+ * kernel_platform/qcom/proprietary/devicetree/qcom/cliffs-mtp.dtsi:23-69).
+ * The rails are defined above: L1D/L3D on the PM8550VS d regulators-2 block,
+ * L12B/S2B/L5B in regulators-0.
+ *
+ * Mainline's ufshcd reads only vdd-hba/vcc/vccq (drivers/ufs/host/ufshcd-pltfrm.c:181-189)
+ * and the QMP UFS PHY only vdda-phy/vdda-pll (drivers/phy/qualcomm/phy-qcom-qmp-ufs.c:1299-1303),
+ * so the three downstream supplies the QRD omits are recorded here but not
+ * voted by a driver: vdda-qref shares L2B with the USB HS PHY's vdd and stays
+ * on through that consumer; vddp-ref-clk and vccq-parent have no consumer, so
+ * their rails are regulator-always-on above. The downstream vdda-phy-min-microvolt
+ * of 912000 is the PON voltage and lies inside L1D's range; mainline has no
+ * property for it.
+ */
+&ufs_mem_hc {
+	vcc-supply = <&vreg_l12b>;
+	vcc-max-microamp = <1200000>;
+
+	vccq-supply = <&vreg_l3d_1p28>;
+	vccq-max-microamp = <1200000>;
+
+	qcom,vddp-ref-clk-supply = <&vreg_l5b_1p2>;
+	qcom,vddp-ref-clk-max-microamp = <100>;
+
+	qcom,vccq-parent-supply = <&vreg_s2b_1p4>;
+	qcom,vccq-parent-max-microamp = <210000>;
+
+	status = "okay";
+};
+
+&ufs_mem_phy {
+	vdda-phy-supply = <&vreg_l1d_0p96>;
+	vdda-pll-supply = <&vreg_l4b_1p2>;
+	vdda-qref-supply = <&vreg_l2b_0p95>;
+
+	status = "okay";
+};
+
+/*
+ * WCN6750 Wi-Fi over the WPSS remoteproc. The nodes are upstream's: the
+ * Palawan/Lamma dtsi already carries the WPSS PAS (palawan.dtsi:5015), the
+ * WPSS and WLAN SMP2P entries (palawan.dtsi:1095-1148), the MSA carveout
+ * (palawan.dtsi:931) and the Wi-Fi node (palawan.dtsi:4467). The shipped
+ * Avalon dtbo names the same chip over the same link, a qcom,wcn6750 node
+ * with qcom,rproc-handle = <&wpss_pas>
+ * (android_kernel_modules_and_devicetree_oneplus_sm7675, branch
+ * oneplus/sm7675_b_16.0.0_nord_4, commit 150f7f8f3354dc680da90e83788bd25d9b983739,
+ * vendor/qcom/proprietary/wlan-devicetree/cliffs-qca6750.dtsi:34-38), and the
+ * running phone carries qca_cld3_qca6750 held by icnss2 (F0007). This is the
+ * WPSS path, so no PCIe controller is involved.
+ *
+ * The firmware name is the downstream one, qca6750/wpss.mdt
+ * (kernel_platform/qcom/proprietary/devicetree/qcom/cliffs.dtsi:1660). The
+ * file and its wpss.b* segments belong to the phone's own modem partition,
+ * which Android mounts at /vendor/firmware_mnt; they are not part of this
+ * tree and no firmware is redistributed here. ath11k additionally requests
+ * ath11k/WCN6750/hw1.0/{amss.bin,m3.bin,board-2.bin}
+ * (drivers/net/wireless/ath/ath11k/core.c:579-582, hw.h:74-82); the phone's
+ * modem partition carries neither m3.bin nor amss.bin, so how ath11k's two
+ * files map onto the vendor bundle is still open (F0035).
+ */
+&remoteproc_wpss {
+	firmware-name = "qca6750/wpss.mdt";
+
+	status = "okay";
+};
+
+&wifi {
+	status = "okay";
+};
+
+/*
+ * WCN6750 Bluetooth on the fourth QUP serial port. BT_EN is TLMM 156,
+ * SW_CTRL is TLMM 80, and the supply names are the ones hci_qca looks up for
+ * QCA_WCN6750 (drivers/bluetooth/hci_qca.c:2171-2184). All of it is the
+ * downstream board's (vendor/qcom/proprietary/bt-devicetree/
+ * cliffs-qca6750-bt.dtsi:4-45 in the OnePlus device tree pinned in F0005):
+ * qcom,bt-reset-gpio on 156, qcom,bt-sw-ctrl-gpio on 80, and the bt-vdd-*
+ * rails, which map to the regulators above as
+ *
+ *   io L7B, aon/dig/rfacmn/rfa-0p8 S3B, rfa1 (1.7 V) S1B,
+ *   rfa2 (1.2 V) S2B, ipa-2p2 S3E.
+ *
+ * WL_EN, TLMM 35 downstream, is not described: no mainline node consumes it.
+ *
+ * The driver reads firmware-name as NVM then rampatch and prefixes qca/
+ * (drivers/bluetooth/btqca.c:800-803, 869-874; binding
+ * qcom,bluetooth-common.yaml). The two names are the files the phone's own
+ * bluetooth partition carries (msnv12.bin, msbtfw12.mbn); neither is part of
+ * this tree and no firmware is redistributed here. A later step stages them
+ * for request_firmware().
+ *
+ * The driver's ninth regulator, vddasd, is deprecated and not wired on this
+ * board downstream, so it is left out: on a device-tree system the regulator
+ * core substitutes a dummy for a missing supply
+ * (drivers/regulator/core.c:130-133, 2206-2212). No max-speed is set either,
+ * as downstream sets none: the qca UART protocol negotiates 3 Mbaud from its
+ * own oper_speed (drivers/bluetooth/hci_qca.c:2088-2096).
+ */
+&uart10 {
+	status = "okay";
+
+	bluetooth {
+		compatible = "qcom,wcn6750-bt";
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&bt_en_sleep>;
+
+		enable-gpios = <&tlmm 156 GPIO_ACTIVE_HIGH>;
+		swctrl-gpios = <&tlmm 80 GPIO_ACTIVE_HIGH>;
+
+		vddio-supply = <&vreg_l7b_1p8>;
+		vddaon-supply = <&vreg_s3b_1p04>;
+		vddbtcxmx-supply = <&vreg_s3b_1p04>;
+		vddrfacmn-supply = <&vreg_s3b_1p04>;
+		vddrfa0p8-supply = <&vreg_s3b_1p04>;
+		vddrfa1p7-supply = <&vreg_s1b_2p04>;
+		vddrfa1p2-supply = <&vreg_s2b_1p4>;
+		vddrfa2p2-supply = <&vreg_s3e_2p4>;
+
+		firmware-name = "msnv12.bin", "msbtfw12.mbn";
+	};
+};
+
+/*
+ * The zap shader is authenticated by the secure monitor, so it has to be the
+ * file signed for this device: the build-1001 vendor partition's
+ * /vendor/firmware directory lists gen71100_zap.mbn next to gen71100_sqe.fw and
+ * gen71100_gmu.bin, the three names the mainline catalog asks for on chip
+ * 0x43030b00 (drivers/gpu/drm/msm/adreno/a6xx_catalog.c:1618-1628). The file is
+ * not added here; a later step stages the phone's copy under this path.
+ */
+&gpu_zap_shader {
+	firmware-name = "qcom/lamma/gen71100_zap.mbn";
+};
+
+/*
+ * The GPU is an Adreno 732. Downstream's cliffs7-gpu.dtsi overrides
+ * qcom,gpu-model to "Adreno732" on top of cliffs-gpu.dtsi, which states the
+ * gen7-11-0 compatible, chipid 0x43030b00 and the 3d00000/3d50000/3d61000/
+ * 3d9e000 register windows (graphics-devicetree/gpu/cliffs-gpu.dtsi:4-19 and
+ * cliffs7-gpu.dtsi:1-5). The mainline catalog maps that chip id to the a7xx
+ * gen2 family and the gen71100 firmware set
+ * (drivers/gpu/drm/msm/adreno/a6xx_catalog.c:1617-1628), and Lamma selects the
+ * matching GMU variant (arch/arm64/boot/dts/qcom/lamma.dtsi:70-72).
+ *
+ * The rest of the path is already described in the SoC tree: the GPUCC with its
+ * CX and GX power domains, the Adreno SMMU, the GMU node with its rscc window,
+ * the gfx-mem interconnect, the OPP table and the zap-shader carveout
+ * (palawan.dtsi:2354-2395, 2454-2517 and 2520-2560). The board only turns the
+ * GPU node on.
+ */
+&gpu {
+	status = "okay";
+};
+
+&tlmm {
+	/*
+	 * GPIOs 56-60 are owned by a trusted application and fault the XPU when
+	 * the OS reads their CTL registers. gpiolib reads every GPIO's direction
+	 * at gpiochip registration, so without this the TLMM probe hangs the bus
+	 * (F0015). The list is the downstream OnePlus/QCOM cliffs tlmm
+	 * qcom,gpios-reserved (android_kernel_modules_and_devicetree_oneplus_sm7675,
+	 * branch oneplus/sm7675_b_16.0.0_nord_4, commit
+	 * 150f7f8f3354dc680da90e83788bd25d9b983739,
+	 * kernel_platform/qcom/proprietary/devicetree/qcom/cliffs.dtsi:741), and
+	 * matches the shipped Avalon vendor_boot DTB's tlmm qcom,gpios-reserved.
+	 */
+	gpio-reserved-ranges = <56 5>;
+
+	/*
+	 * BT_EN: 2 mA, output low with a pull-down, so the chip stays off until
+	 * hci_qca drives the line (downstream
+	 * vendor/qcom/proprietary/bt-devicetree/cliffs-qca6750-bt.dtsi:4-16).
+	 * SW_CTRL needs no state here: downstream leaves that pin at its default
+	 * function.
+	 */
+	bt_en_sleep: bt-en-sleep-state {
+		pins = "gpio156";
+		function = "gpio";
+		drive-strength = <2>;
+		output-low;
+		bias-pull-down;
+	};
+
+	/*
+	 * MI2S1 carries the speaker amplifiers: the downstream audio overlay
+	 * feeds both TFA98xx amps from I2S1 (oplus,speaker-i2s-id = <1>,
+	 * avalon-24211-audio-cliffs-overlay.dtsi:119-120) and its pinctrl group
+	 * takes the i2s1_* states (same file:65-76). The mux, sleep config and
+	 * 8 mA active drive come from the downstream TLMM state definitions
+	 * (qcom/cliffs-pinctrl.dtsi:1845-1856, 1874-1885, 1903-1914,
+	 * 1932-1943), except the active SCK drive strength: the Avalon overlay
+	 * lowers it to 4 mA (avalon-24211-audio-cliffs-overlay.dtsi:125-129).
+	 * The downstream sleep config also sets input-enable; the upstream
+	 * state schema rejects that property (qcom,tlmm-common.yaml:84), so the
+	 * pull-down alone leaves the line an input.
+	 */
+	i2s1_sck_active: i2s1-sck-active-state {
+		sck-pins {
+			pins = "gpio123";
+			function = "i2s1_sck";
+			drive-strength = <4>;
+			bias-disable;
+		};
+	};
+
+	i2s1_sck_sleep: i2s1-sck-sleep-state {
+		sck-pins {
+			pins = "gpio123";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+	};
+
+	i2s1_ws_active: i2s1-ws-active-state {
+		ws-pins {
+			pins = "gpio125";
+			function = "i2s1_ws";
+			drive-strength = <8>;
+			bias-disable;
+		};
+	};
+
+	i2s1_ws_sleep: i2s1-ws-sleep-state {
+		ws-pins {
+			pins = "gpio125";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+	};
+
+	i2s1_sd0_active: i2s1-sd0-active-state {
+		sd0-pins {
+			pins = "gpio124";
+			function = "i2s1_data0";
+			drive-strength = <8>;
+			bias-disable;
+		};
+	};
+
+	i2s1_sd0_sleep: i2s1-sd0-sleep-state {
+		sd0-pins {
+			pins = "gpio124";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+	};
+
+	i2s1_sd1_active: i2s1-sd1-active-state {
+		sd1-pins {
+			pins = "gpio126";
+			function = "i2s1_data1";
+			drive-strength = <8>;
+			bias-disable;
+		};
+	};
+
+	i2s1_sd1_sleep: i2s1-sd1-sleep-state {
+		sd1-pins {
+			pins = "gpio126";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+	};
+};
+
+/*
+ * The board has no WSA speaker: Avalon's downstream audio overlay disables the
+ * WSA macro and all four WSA amplifier nodes
+ * (audio-devicetree/oplus/cliffs-audio-overlay-common.dtsi:13-35) and sets
+ * qcom,wsa-max-devs = <0> (oplus/avalon-24211-audio-cliffs-overlay.dtsi:59).
+ * Nothing in this tree consumes the macro's clock.
+ */
+&lpass_wsamacro {
+	status = "disabled";
+};
+
+/*
+ * Avalon downstream's cliffs-adsp_loader.dtsi names these firmware files
+ * (OnePlusOSS commit 150f7f8f3354dc680da90e83788bd25d9b983739, lines 3-4).
+ * A later initramfs step must source them from the phone's own
+ * /vendor/firmware_mnt/image and stage them for request_firmware(); never
+ * redistribute the firmware in this tree.
+ */
+&remoteproc_adsp {
+	firmware-name = "adsp2.mdt", "adsp2_dtb.mdt";
+	status = "okay";
+
+	glink-edge {
+		/*
+		 * Avalon downstream cliffs.dtsi:1785-1786 exposes the PMIC
+		 * charger service on this ADSP channel.
+		 */
+		qcom,pmic_glink_rpmsg {
+			qcom,glink-channels = "PMIC_RTR_ADSP_APPS";
+		};
+	};
+};
+
+/*
+ * The CDSP, the compute DSP behind the Hexagon HTP and the FastRPC channels.
+ *
+ * The SoC tree already carries the remoteproc, its GLINK edge and ten FastRPC
+ * compute contexts, copied from SM8650 and disabled. Every field was checked
+ * against the phone's own descriptions before this board turns the node on:
+ *
+ * - Downstream's node has the same base 0x32300000 and length, wdog GIC_SPI
+ *   578, xo clock, cx/mxc/nsp power domains, aoss_qmp, remote-pid 5, the
+ *   "stop" smem state, and the same smp2p indices under the interrupt names
+ *   fatal/ready/handover/stop-ack (kernel_platform/qcom/proprietary/
+ *   devicetree/qcom/cliffs.dtsi:1876-1968).
+ * - The carveouts are downstream's: cdsp_mem 0x99900000 + 0x1400000 and
+ *   q6_cdsp_dtb_mem 0x9ad00000 + 0x80000, with a third memory-region for the
+ *   global sync region that the SM8650 PAS data assigns to the CDSP
+ *   (cliffs-reserved-memory.dtsi:94-100, 150-157).
+ * - The FastRPC contexts use stream IDs 0xc01-0xc08 and 0xc0c-0xc0e with
+ *   stream-ID mask 0, which is what the phone's shipped Cliffs 7
+ *   vendor_boot DTB carries (qcom,msm_fastrpc, label "cdsprpc-smd"); the
+ *   downstream source tree has no compute-context node for this SoC, so the
+ *   shipped DTB is the hardware description here.
+ * - The platform data the fork maps palawan-cdsp-pas to (pas_id 18,
+ *   dtb_pas_id 0x25, minidump 7, crash_reason_smem 601, ssctl 0x17, sysmon
+ *   "cdsp", cdsp.mdt and cdsp_dtb.mdt) is downstream's cliffs_cdsp_resource
+ *   field for field (OnePlusOSS android_kernel_oneplus_sm7675, branch
+ *   oneplus/sm7675_b_16.0.0_nord_4, drivers/remoteproc/qcom_q6v5_pas.c:
+ *   2541-2555; devicetree commit 150f7f8f3354dc680da90e83788bd25d9b983739).
+ *
+ * The firmware is not part of this tree: a test initramfs stages cdsp.mdt, its
+ * .bNN segments and cdsp_dtb.mdt from the phone's own firmware_mnt image for
+ * request_firmware(), and nothing here redistributes it.
+ */
+&remoteproc_cdsp {
+	status = "okay";
+};
+
+/*
+ * The sm8550-compatible PMIC GLINK client creates qcom_battmgr's battery,
+ * USB and wireless power supplies. The downstream qcom,battery-charger child is
+ * proprietary and has no mainline binding; do not copy it.
+ *
+ * The board's own compatible selects qcom_battmgr's OPPO/OnePlus variant: that
+ * firmware defines battery property ids 24-26 and the 0x48 opcode differently
+ * (oplus_hal_adsp.h:249-323, oplus_hal_adsp.c:3407-3410), so the driver exposes
+ * the readout only and registers no charge-control setter on this board.
+ */
+/ {
+	pmic-glink {
+		compatible = "qcom,avalon-pmic-glink",
+			     "qcom,sm8550-pmic-glink",
+			     "qcom,pmic-glink";
+	};
+};
+
+/*
+ * The pack gauge. Stock's battery power supply is the external bq27541 at I2C
+ * address 0x55 on qupv3_se12_i2c at 100 kHz (oplus-chg-24211.dtsi:942-963),
+ * not the ADSP's own battery object. qupv3_se12_i2c is i2c@890000 and its two
+ * pins are gpio176/gpio177 on qup1_se4 (oplus-chg-24211.dtsi:788-810), which
+ * palawan.dtsi's qup_i2c12_data_clk state already describes.
+ *
+ * bq27xxx writes a data-memory block only when the gauge has battery
+ * information, and that comes from a monitored-battery node; this node has
+ * none, so the gauge is read only.
+ */
+&qupv3_id_1 {
+	status = "okay";
+};
+
+&gpi_dma1 {
+	status = "okay";
+};
+
+&i2c12 {
+	status = "okay";
+	clock-frequency = <100000>;
+
+	gauge@55 {
+		compatible = "ti,bq27541";
+		reg = <0x55>;
+	};
+};
+
+/*
+ * The WCN6750's PMU takes its low-frequency sleep clock from PMK8550 GPIO3,
+ * which the PMIC drives in "func1" mode (the alternate sleep clock output).
+ * Without it the WPSS firmware asserts as soon as the first vdev is created,
+ * in its WMAC transition: "cmnos_assert.c:400:Asserted in
+ * whal_wmac_recipes.c:whal_wmac_transition_to_fw_control:1734", and the
+ * interface never comes up. This board's own DT carries exactly this state on
+ * this pin: the stock dtbo's Avalon overlay (entry1.dtbo, pinctrl@b800) has
+ * pins "gpio3", function "func1", input-disable, output-enable, bias-disable
+ * and power-source 0, and the downstream board file repeats it
+ * (vendor/qcom/proprietary/devicetree/qcom/cliffs-pmic-overlay.dtsi:81). The
+ * same fix with a different pin is what the upstream WCN6755 bring-up needed
+ * for the identical assert. The state is the GPIO controller's own default
+ * state, so it is claimed when that controller registers, before the WPSS is
+ * started.
+ */
+&pmk8550_gpios {
+	pinctrl-0 = <&alt_sleep_clk_default>;
+	pinctrl-names = "default";
+
+	alt_sleep_clk_default: alt-sleep-clk-state {
+		pins = "gpio3";
+		function = "func1";
+		input-disable;
+		output-enable;
+		bias-disable;
+		power-source = <0>;
+	};
+};
