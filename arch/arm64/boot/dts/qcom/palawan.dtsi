@@ -4506,12 +4506,8 @@
 			memory-region = <&wlan_msa_mem>;
 			status = "disabled";
 
-			qcom,smem-states = <&smp2p_wlan_1_out 0>,
-				<&smp2p_wlan_2_out 0>,
-				<&smp2p_wlan_3_out 0>;
-			qcom,smem-state-names = "wlan-smp2p-out",
-				"wlan-soc-wake-smp2p-out",
-				"wlan-ep-powersave-smp2p-out";
+			qcom,smem-states = <&smp2p_wlan_1_out 0>;
+			qcom,smem-state-names = "wlan-smp2p-out";
 		};
 
 		timer@17420000 {
