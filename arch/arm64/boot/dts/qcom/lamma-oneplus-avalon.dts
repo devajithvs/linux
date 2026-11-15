@@ -22,6 +22,7 @@
 #include <dt-bindings/input/linux-event-codes.h>
 #include <dt-bindings/leds/common.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+#include <dt-bindings/sound/qcom,q6dsp-lpass-ports.h>
 #include "lamma.dtsi"
 #include "pm7550.dtsi" /* PMXR2230 */
 #include "pm7550ba.dtsi"
@@ -116,6 +117,115 @@
 		regulator-max-microvolt = <1800000>;
 		enable-active-high;
 		gpios = <&pm8550vs_c_gpios 3 GPIO_ACTIVE_HIGH>;
+	};
+
+	/*
+	 * The WCD937x codec, split into the RX and TX SoundWire slaves below.
+	 * Supplies: L7B at 1.8 V feeds vdd-rxtx, vdd-px and vdd-buck (13890,
+	 * 13890 and 361110 uA; rxtx and vddpx static, buck on demand) and BOB
+	 * at 3.296 V feeds vdd-mic-bias at 6760 uA
+	 * (audio-devicetree/cliffs-audio-overlay.dtsi:318-332 and
+	 * oplus/cliffs-audio-overlay-common.dtsi:33-39). Downstream's final
+	 * Avalon overlay leaves the three mic biases at 1800 mV
+	 * (oplus/avalon-24211-audio-cliffs-overlay.dtsi:44-54 sets the MBHC
+	 * thresholds, not the bias voltages; the bias values in
+	 * cliffs-audio-overlay.dtsi:330-332 are 1800 mV). The reset line is
+	 * LPASS LPI GPIO12 (see the state below).
+	 *
+	 * The variant is not recorded anywhere downstream: the driver accepts
+	 * both ids, reads the chip id from the efuse and only prints the
+	 * unknown case (sound/soc/codecs/wcd937x.c:2512-2522, :2981-2984), so
+	 * the compatible pair names what the board may carry and the first
+	 * boot reports which one is fitted.
+	 */
+	wcd937x: audio-codec {
+		compatible = "qcom,wcd9375-codec", "qcom,wcd9370-codec";
+
+		pinctrl-0 = <&wcd_reset_active>;
+		pinctrl-names = "default";
+
+		reset-gpios = <&lpass_tlmm 12 GPIO_ACTIVE_LOW>;
+
+		vdd-buck-supply = <&vreg_l7b_1p8>;
+		vdd-rxtx-supply = <&vreg_l7b_1p8>;
+		vdd-px-supply = <&vreg_l7b_1p8>;
+		vdd-mic-bias-supply = <&vreg_bob>;
+
+		qcom,micbias1-microvolt = <1800000>;
+		qcom,micbias2-microvolt = <1800000>;
+		qcom,micbias3-microvolt = <1800000>;
+		/*
+		 * The board wires three mic biases (downstream enables
+		 * MIC BIAS1-3 only, oplus/avalon-24211-audio-cliffs-overlay.dtsi:48-54).
+		 * The binding requires the fourth value and the driver's
+		 * max_bias is 3, so it never programs this one; 1.8 V is the
+		 * driver's own default for an unset bias
+		 * (sound/soc/codecs/wcd-common.c:36-61).
+		 */
+		qcom,micbias4-microvolt = <1800000>;
+
+		qcom,rx-device = <&wcd937x_rx>;
+		qcom,tx-device = <&wcd937x_tx>;
+
+		#sound-dai-cells = <1>;
+	};
+
+	/*
+	 * The one card this board can register: the AudioReach machine driver
+	 * (sound/soc/qcom/sc8280xp.c, compatible added for sm7675) builds the
+	 * links from this node through qcom_snd_parse_of()
+	 * (sound/soc/qcom/common.c:26-172). The MI2S1 pins carry the speaker
+	 * amplifiers (oplus,speaker-i2s-id = <1>,
+	 * oplus/avalon-24211-audio-cliffs-overlay.dtsi:119-120) and the four
+	 * active states are the ones described above; the card applies them
+	 * because the q6apm DAI does not.
+	 */
+	sound {
+		compatible = "qcom,sm7675-sndcard", "qcom,sm8450-sndcard";
+		model = "OnePlus Nord 4";
+
+		pinctrl-0 = <&i2s1_sck_active>, <&i2s1_ws_active>,
+			    <&i2s1_sd0_active>, <&i2s1_sd1_active>;
+		pinctrl-names = "default";
+
+		wcd-playback-dai-link {
+			link-name = "WCD Playback";
+
+			cpu {
+				sound-dai = <&q6apmbedai RX_CODEC_DMA_RX_0>;
+			};
+
+			codec {
+				sound-dai = <&wcd937x 0>, <&swr1 0>,
+					    <&lpass_rxmacro 0>;
+			};
+
+			platform {
+				sound-dai = <&q6apm>;
+			};
+		};
+
+		/*
+		 * Both amplifiers are fed from the same MI2S: downstream's
+		 * oplus,speaker-i2s-id = <1> is the secondary MI2S, whose
+		 * SCK/WS/SD0/SD1 are the TLMM i2s1 states above
+		 * (oplus/avalon-24211-audio-cliffs-overlay.dtsi:113-148).
+		 */
+		speaker-dai-link {
+			link-name = "Speaker Playback";
+
+			cpu {
+				sound-dai = <&q6apmbedai SECONDARY_MI2S_RX>;
+			};
+
+			codec {
+				sound-dai = <&spk_amp0>, <&spk_amp1>;
+			};
+
+			platform {
+				sound-dai = <&q6apm>;
+			};
+		};
 	};
 };
 
@@ -268,6 +378,24 @@
 			regulator-name = "vreg_l22b";
 			regulator-min-microvolt = <2700000>;
 			regulator-max-microvolt = <3400000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/*
+		 * BOB: the WCD937x codec's mic-bias supply. The PMXR2230 (PM7550)
+		 * BOB is the RPMh bobb1 resource: 3.008-3.96 V, init 3.296 V,
+		 * and the codec draws 6760 uA from it
+		 * (downstream qcom/cliffs-regulators.dtsi:821-831 and
+		 * audio-devicetree/cliffs-audio-overlay.dtsi:327-332). The
+		 * codec driver enables it with its other supplies at probe and
+		 * never changes the voltage (sound/soc/codecs/wcd937x.c:112,
+		 * :2929-2932), so the boot/PON value downstream programs is
+		 * what the rail keeps.
+		 */
+		vreg_bob: bob {
+			regulator-name = "vreg_bob";
+			regulator-min-microvolt = <3008000>;
+			regulator-max-microvolt = <3960000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 	};
@@ -1135,4 +1263,206 @@
 
 &gpi_dma0 {
 	status = "okay";
+};
+
+/*
+ * Audio. The board's codec is a WCD937x in its split form: an RX slave and a
+ * TX slave on two SoundWire controllers that belong to the LPASS RX and VA
+ * macros. Every register address, interrupt, clock and per-port write below is
+ * from the downstream Avalon/Lamma sources
+ * (android_kernel_modules_and_devicetree_oneplus_sm7675,
+ * oneplus/sm7675_b_16.0.0_nord_4, 150f7f8f3354dc680da90e83788bd25d9b983739):
+ * the two master nodes in vendor/qcom/proprietary/audio-devicetree/
+ * cliffs-audio-overlay.dtsi:26-72 (VA master, id 3) and :138-173 (RX master,
+ * id 2), and the two codec ports of the card in the same file's
+ * :288-337.
+ *
+ * The per-port frame parameters are not in the downstream DT. The downstream
+ * codec driver computes the TX master's from the codec's
+ * qcom,swr-tx-port-params (oplus/avalon-24211-audio-cliffs-overlay.dtsi:307-310)
+ * at stream setup, and the RX master's come from a static table in the
+ * machine driver: asoc/pineapple-port-config.h:118-131
+ * (rx_frame_params_default, the table the cliffs build compiles in -- the
+ * board's card compatible is qcom,pineapple-asoc-snd), pushed into the master
+ * through lpass_cdc_set_port_map() (asoc/pineapple.c:2249-2250) and applied by
+ * swrm_get_port_config()/copy_port_tables() (soc/swr-mstr-ctrl.c:806-829,
+ * :788-802). Mainline needs the same numbers as DT properties, in the order
+ * "out ports followed by in ports", port i+1 at index i
+ * (drivers/soundwire/qcom.c:1416-1501).
+ */
+&soc {
+	swr1: soundwire@6ad0000 {
+		compatible = "qcom,soundwire-v2.0.0";
+		reg = <0 0x06ad0000 0 0x10000>;
+
+		interrupts = <GIC_SPI 155 IRQ_TYPE_LEVEL_HIGH 0>;
+
+		clocks = <&lpass_rxmacro>;
+		clock-names = "iface";
+
+		label = "RX";
+
+		pinctrl-0 = <&rx_swr_active>;
+		pinctrl-names = "default";
+
+		qcom,ports-sinterval = /bits/ 16 <
+			0x0003 0x003f 0x001f 0x0007 0x0000 0x018f
+			0xffff 0xffff 0xffff 0xffff 0xffff 0xffff>;
+		qcom,ports-offset1 = /bits/ 8 <
+			0x00 0x00 0x0b 0x01 0x00 0x00
+			0xff 0xff 0xff 0xff 0xff 0xff>;
+		qcom,ports-offset2 = /bits/ 8 <
+			0x00 0x00 0x0b 0x00 0x00 0x00
+			0xff 0xff 0xff 0xff 0xff 0xff>;
+		qcom,ports-block-pack-mode = /bits/ 8 <
+			0xff 0x00 0x01 0xff 0x00 0x00
+			0xff 0xff 0xff 0xff 0xff 0xff>;
+		qcom,ports-hstart = /bits/ 8 <
+			0xff 0x03 0xff 0xff 0xff 0x08
+			0xff 0xff 0x00 0xff 0xff 0xff>;
+		qcom,ports-hstop = /bits/ 8 <
+			0xff 0x06 0xff 0xff 0xff 0x08
+			0xff 0xff 0x0f 0xff 0xff 0xff>;
+		qcom,ports-word-length = /bits/ 8 <
+			0x01 0x07 0x04 0xff 0xff 0x0f
+			0xff 0xff 0x18 0xff 0xff 0xff>;
+		qcom,ports-block-group-count = /bits/ 8 <
+			0xff 0xff 0xff 0xff 0x00 0x00
+			0xff 0xff 0x00 0xff 0xff 0xff>;
+		qcom,ports-lane-control = /bits/ 8 <
+			0x01 0x00 0x00 0x00 0x00 0x00
+			0xff 0xff 0x01 0xff 0xff 0xff>;
+
+		#address-cells = <2>;
+		#size-cells = <0>;
+		#sound-dai-cells = <1>;
+	};
+
+	swr2: soundwire@6d30000 {
+		compatible = "qcom,soundwire-v2.0.0";
+		reg = <0 0x06d30000 0 0x10000>;
+
+		interrupts = <GIC_SPI 496 IRQ_TYPE_LEVEL_HIGH 0>,
+			     <GIC_SPI 520 IRQ_TYPE_LEVEL_HIGH 0>;
+		interrupt-names = "core", "wakeup";
+
+		clocks = <&lpass_txmacro>;
+		clock-names = "iface";
+
+		label = "VA";
+
+		pinctrl-0 = <&tx_swr_active>;
+		pinctrl-names = "default";
+
+		qcom,ports-sinterval-low = /bits/ 8 <
+			0xff 0xff 0xff 0xff 0xff>;
+		qcom,ports-offset1 = /bits/ 8 <
+			0x00 0x01 0x01 0x01 0x00>;
+		qcom,ports-offset2 = /bits/ 8 <
+			0x00 0x00 0x00 0x00 0x00>;
+		qcom,ports-block-pack-mode = /bits/ 8 <
+			0xff 0xff 0xff 0xff 0xff>;
+		qcom,ports-lane-control = /bits/ 8 <
+			0x00 0x00 0x00 0x00 0x00>;
+
+		#address-cells = <2>;
+		#size-cells = <0>;
+		#sound-dai-cells = <1>;
+	};
+};
+
+/*
+ * The codec's reset pad: LPASS LPI GPIO12 as a plain GPIO, active low, 6 mA,
+ * no bias, left high (reset released). Downstream describes the same pad as
+ * wcd_reset_active with 16 mA and output-high
+ * (audio-devicetree/cliffs-lpi.dtsi:1669-1681) and the Avalon overlay lowers
+ * the drive to 6 mA (oplus/avalon-24211-audio-cliffs-overlay.dtsi:150-153).
+ * The state is needed because the LPI pinctrl has no gpio_request_enable op,
+ * so claiming the GPIO does not mux it
+ * (drivers/pinctrl/qcom/pinctrl-lpass-lpi.c:170-175).
+ */
+&lpass_tlmm {
+	wcd_reset_active: wcd-reset-active-state {
+		pins = "gpio12";
+		function = "gpio";
+		drive-strength = <6>;
+		bias-disable;
+		output-high;
+	};
+};
+
+/*
+ * The codec's two SoundWire slaves. Their compatible is the SoundWire
+ * enumeration id (mfg 0x0217, part 0x010a) that the mainline slave driver
+ * matches (sound/soc/codecs/wcd937x-sdw.c:1066-1069). The reg cell pair is a
+ * link id and the part's unique id; 4 for the RX and 3 for the TX slave are
+ * the ids this part reports on hardware (Documentation/devicetree/bindings/
+ * sound/qcom,wcd937x-sdw.yaml:88-104, the same pair in
+ * arch/arm64/boot/dts/qcom/qcm6490-idp.dts:938-977 for a WCD9370).
+ * The port mappings are the static ones downstream writes for this board:
+ * RX HPH->1, CLSH->2, COMP->3, LO->4, DSD->5
+ * (audio-devicetree/cliffs-audio-overlay.dtsi:292-299) and TX 1/2->2, 3->3,
+ * 4->4 (the VA master's SWRM_TX1..TX3 channel groups,
+ * cliffs-audio-overlay.dtsi:55-60, and the WCD9370 mapping in the binding
+ * above). The channel maps are left out: downstream's mask values do not
+ * translate one-for-one and capture is not part of this bring-up.
+ */
+&swr1 {
+	wcd937x_rx: codec@0,4 {
+		compatible = "sdw20217010a00";
+		reg = <0 4>;
+
+		qcom,rx-port-mapping = <1 2 3 4 5>;
+		qcom,rx-channel-mapping = /bits/ 8 <1 2 1 1 2 1 2 1>;
+	};
+};
+
+&swr2 {
+	wcd937x_tx: codec@0,3 {
+		compatible = "sdw20217010a00";
+		reg = <0 3>;
+
+		qcom,tx-port-mapping = <2 2 3 4>;
+	};
+};
+
+/*
+ * The speaker amplifiers: two NXP TFA9873s on the qupv3 SE0 I2C bus
+ * (i2c@a80000, IRQ 353, 400 kHz), addresses 0x34 and 0x35, one per channel,
+ * each with its own reset line on the main TLMM -- 127 for channel 0 and 131
+ * for channel 1, both active high -- and both supplied from L7B at 1.8 V
+ * (audio-devicetree/oplus/avalon-24211-audio-cliffs-overlay.dtsi:80-102, the
+ * bus in cliffs-qupv3.dtsi:86-97, the supply L7B in
+ * qcom/cliffs-regulators.dtsi:499-506). The vendor node carries its
+ * calibration ranges (tfa_min_range 5000, tfa_max_range 8000,
+ * tfa_default_mohm 8000 and 6300, tfa_channel 0 and 1); this driver has no
+ * calibration path yet, so they are not repeated here.
+ *
+ * The downstream reset is a bare line the vendor driver drives: the pin's
+ * TLMM default function is GPIO, and msm_gpio_request_enable() muxes it on
+ * request, so no pinctrl state is needed.
+ */
+&i2c0 {
+	status = "okay";
+	clock-frequency = <400000>;
+
+	spk_amp0: amplifier@34 {
+		compatible = "nxp,tfa9873";
+		reg = <0x34>;
+
+		reset-gpios = <&tlmm 127 GPIO_ACTIVE_HIGH>;
+		vddd-supply = <&vreg_l7b_1p8>;
+
+		#sound-dai-cells = <0>;
+	};
+
+	spk_amp1: amplifier@35 {
+		compatible = "nxp,tfa9873";
+		reg = <0x35>;
+
+		reset-gpios = <&tlmm 131 GPIO_ACTIVE_HIGH>;
+		vddd-supply = <&vreg_l7b_1p8>;
+
+		#sound-dai-cells = <0>;
+	};
 };
