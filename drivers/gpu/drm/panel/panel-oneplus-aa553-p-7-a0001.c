@@ -543,11 +543,18 @@ static void aa553_remove(struct mipi_dsi_device *dsi)
 	struct aa553_panel *ctx = mipi_dsi_get_drvdata(dsi);
 	int ret;
 
+	/*
+	 * The panel goes first: detaching the DSI device while the DRM panel
+	 * and its bridge still exist leaves the bridge pointing at a device
+	 * whose host is being torn down (mipi_dsi_detach then fails with
+	 * -EINVAL), and the teardown after that can hang.  Mainline panel
+	 * drivers remove the panel, then detach.
+	 */
+	drm_panel_remove(&ctx->panel);
+
 	ret = mipi_dsi_detach(dsi);
 	if (ret < 0)
 		dev_err(&dsi->dev, "Failed to detach from DSI host: %d\n", ret);
-
-	drm_panel_remove(&ctx->panel);
 }
 
 static const struct of_device_id aa553_of_match[] = {
