@@ -2520,6 +2520,8 @@ static int wcd937x_soc_codec_probe(struct snd_soc_component *component)
 		return -EINVAL;
 	}
 
+	dev_info(dev, "WCD937x chip id 0x%x\n", chipid);
+
 	wcd937x->clsh_info = wcd_clsh_ctrl_alloc(component, WCD937X);
 	if (IS_ERR(wcd937x->clsh_info)) {
 		pm_runtime_put(dev);
