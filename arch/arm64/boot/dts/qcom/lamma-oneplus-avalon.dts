@@ -667,10 +667,12 @@
  *
  * The driver reads firmware-name as NVM then rampatch and prefixes qca/
  * (drivers/bluetooth/btqca.c:800-803, 869-874; binding
- * qcom,bluetooth-common.yaml). The two names are the files the phone's own
- * bluetooth partition carries (msnv12.bin, msbtfw12.mbn); neither is part of
- * this tree and no firmware is redistributed here. A later step stages them
- * for request_firmware().
+ * qcom,bluetooth-common.yaml). Only the NVM name is given: the downstream
+ * node names msbtfw12.mbn as the rampatch, but that file is an ELF that
+ * btqca parses as TLV, so the download always failed and only the driver's
+ * ".tlv" name (msbtfw12.tlv, derived from the NVM name) can load (F0140).
+ * Neither file is part of this tree and no firmware is redistributed here;
+ * the server stages them under /lib/firmware/qca/ for request_firmware().
  *
  * The driver's ninth regulator, vddasd, is deprecated and not wired on this
  * board downstream, so it is left out: on a device-tree system the regulator
@@ -700,7 +702,7 @@
 		vddrfa1p2-supply = <&vreg_s2b_1p4>;
 		vddrfa2p2-supply = <&vreg_s3e_2p4>;
 
-		firmware-name = "msnv12.bin", "msbtfw12.mbn";
+		firmware-name = "msnv12.bin";
 	};
 };
 
