@@ -32,6 +32,7 @@ struct aa553_panel {
 	struct drm_dsc_config dsc;
 	struct gpio_desc *reset_gpio;
 	struct regulator_bulk_data *supplies;
+	bool prepared;
 };
 
 static const struct regulator_bulk_data aa553_supplies[] = {
@@ -284,6 +285,7 @@ static int aa553_prepare(struct drm_panel *panel)
 	 * (qcom,bl-dsc-cmd-state = "dsi_hs_mode").
 	 */
 	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+	ctx->prepared = true;
 
 	return 0;
 
@@ -299,6 +301,7 @@ static int aa553_unprepare(struct drm_panel *panel)
 	struct aa553_panel *ctx = to_aa553_panel(panel);
 
 	aa553_off(ctx);
+	ctx->prepared = false;
 
 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
 
@@ -344,26 +347,38 @@ static const struct drm_panel_funcs aa553_panel_funcs = {
  */
 static int aa553_bl_update_status(struct backlight_device *bl)
 {
-	struct mipi_dsi_device *dsi = bl_get_data(bl);
-	u16 brightness = bl->props.max_brightness - backlight_get_brightness(bl);
+	struct aa553_panel *ctx = bl_get_data(bl);
+	u16 brightness;
 
-	return mipi_dsi_dcs_set_display_brightness_large(dsi, brightness);
+	/*
+	 * Outside prepare()/unprepare() the rails are down and the panel does
+	 * not answer: a brightness write would sit out the DSI timeout and
+	 * fail. systemd-backlight does exactly that at boot and at shutdown,
+	 * so skip it; drm_panel_enable() calls backlight_enable() after
+	 * prepare() and the level is applied there.
+	 */
+	if (!ctx->prepared)
+		return 0;
+
+	brightness = bl->props.max_brightness - backlight_get_brightness(bl);
+
+	return mipi_dsi_dcs_set_display_brightness_large(ctx->dsi, brightness);
 }
 
 static const struct backlight_ops aa553_bl_ops = {
 	.update_status = aa553_bl_update_status,
 };
 
-static struct backlight_device *aa553_create_backlight(struct mipi_dsi_device *dsi)
+static struct backlight_device *aa553_create_backlight(struct aa553_panel *ctx)
 {
-	struct device *dev = &dsi->dev;
+	struct device *dev = ctx->panel.dev;
 	const struct backlight_properties props = {
 		.type = BACKLIGHT_RAW,
 		.brightness = 1638,
 		.max_brightness = 3999,
 	};
 
-	return devm_backlight_device_register(dev, dev_name(dev), dev, dsi,
+	return devm_backlight_device_register(dev, dev_name(dev), dev, ctx,
 					      &aa553_bl_ops, &props);
 }
 
@@ -397,7 +412,7 @@ static int aa553_probe(struct mipi_dsi_device *dsi)
 
 	ctx->panel.prepare_prev_first = true;
 
-	ctx->panel.backlight = aa553_create_backlight(dsi);
+	ctx->panel.backlight = aa553_create_backlight(ctx);
 	if (IS_ERR(ctx->panel.backlight))
 		return dev_err_probe(dev, PTR_ERR(ctx->panel.backlight),
 				     "Failed to create backlight\n");
