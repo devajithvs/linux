@@ -331,20 +331,51 @@ err_disable_vddio:
 	return ret;
 }
 
-/* HACK: the DDIC's own status, so the sweep needs no eyes (F0151, F0153). */
+/* HACK: the DDIC's own status, so the sweep needs no eyes (F0151, F0153).
+ *
+ * 0x0a, 0x91, 0x03 and 0x2b with their expected bytes are the vendor's own
+ * ESD check (qcom,mdss-dsi-panel-status-command/-value,
+ * dsi-panel-AA553-P-7-A0001-dsc-cmd.dtsi:893-900); the rest are the MIPI DCS
+ * status reads, printed with their return value so a rejected read is visible.
+ */
+struct aa553_dcs_read {
+	u8 cmd;
+	u8 len;
+	bool expected;
+	u8 expect[4];
+};
+
 static void aa553_readback(struct aa553_panel *ctx)
 {
-	static const u8 regs[] = { 0x0a, 0x0c, 0x0d, 0x0e, 0x0f, 0x05 };
-	u8 val;
+	static const struct aa553_dcs_read reads[] = {
+		{ 0x0a, 1, true,  { 0x9c } },
+		{ 0x91, 1, true,  { 0xab } },
+		{ 0x03, 1, true,  { 0x00 } },
+		{ 0x2b, 4, true,  { 0x00, 0x0a, 0xd3 } },
+		{ 0x0c, 1, false, { } },
+		{ 0x0d, 1, false, { } },
+		{ 0x0e, 1, false, { } },
+		{ 0x0f, 1, false, { } },
+		{ 0x05, 1, false, { } },
+	};
+	u8 buf[4];
 	int i, ret;
 
 	/* a DCS read is a low-power-mode transfer */
 	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
-	for (i = 0; i < ARRAY_SIZE(regs); i++) {
-		val = 0xff;
-		ret = mipi_dsi_dcs_read(ctx->dsi, regs[i], &val, 1);
-		pr_info("nord4-dsc: dcs 0x%02x = 0x%02x ret=%d\n",
-			regs[i], val, ret);
+	for (i = 0; i < ARRAY_SIZE(reads); i++) {
+		const struct aa553_dcs_read *r = &reads[i];
+
+		memset(buf, 0xff, sizeof(buf));
+		ret = mipi_dsi_dcs_read(ctx->dsi, r->cmd, buf, r->len);
+		if (!r->expected) {
+			pr_info("nord4-dsc: dcs 0x%02x ret=%d %*phN\n", r->cmd, ret,
+				r->len, buf);
+			continue;
+		}
+		pr_info("nord4-dsc: dcs 0x%02x ret=%d %*phN expected %*phN %s\n",
+			r->cmd, ret, r->len, buf, r->len, r->expect,
+			memcmp(buf, r->expect, r->len) ? "DIFF" : "MATCH");
 	}
 	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
 }
