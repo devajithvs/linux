@@ -433,6 +433,13 @@ static int aa553_probe(struct mipi_dsi_device *dsi)
 	ctx->dsc.bits_per_component = 10;
 	ctx->dsc.bits_per_pixel = 8 << 4;
 	ctx->dsc.block_pred_enable = true;
+	/*
+	 * qcom,mdss-dsc-slice-per-pkt = <2>
+	 * (dsi-panel-AA553-P-7-A0001-dsc-cmd.dtsi:294): both 620x12 slices of a
+	 * line travel in one DSI packet, so one packet per line and 1240 bytes
+	 * per packet, not two packets of 620.
+	 */
+	ctx->dsc.dsc_slice_per_pkt = 2;
 
 	ret = mipi_dsi_attach(dsi);
 	if (ret < 0) {
