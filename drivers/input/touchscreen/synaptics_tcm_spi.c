@@ -809,6 +809,7 @@ static int syna_tcm_probe(struct spi_device *spi)
 					syna_tcm_irq, IRQF_ONESHOT,
 					"syna-tcm", tcm);
 	if (err) {
+		input_unregister_device(input);
 		syna_tcm_power_off(tcm);
 		return dev_err_probe(&spi->dev, err,
 				     "failed to request IRQ\n");
