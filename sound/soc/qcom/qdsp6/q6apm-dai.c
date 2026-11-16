@@ -307,6 +307,8 @@ static int q6apm_dai_prepare(struct snd_soc_component *component,
 
 	/* Now that graph as been prepared and started update the internal state accordingly */
 	prtd->state = Q6APM_STREAM_RUNNING;
+	dev_info(dev, "nord4-audio: fe prepared+started pcm_size %u periods %u period %u phys %pa\n",
+		 prtd->pcm_size, prtd->periods, prtd->pcm_count, &prtd->phys);
 
 	return 0;
 }
@@ -322,6 +324,9 @@ static int q6apm_dai_ack(struct snd_soc_component *component, struct snd_pcm_sub
 
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
 		avail_periods = (runtime->control->appl_ptr - prtd->queue_ptr)/runtime->period_size;
+		dev_info(component->dev,
+			 "nord4-audio: ack appl %lu queue %lu periods %d\n",
+			 runtime->control->appl_ptr, prtd->queue_ptr, avail_periods);
 		for (i = 0; i < avail_periods; i++) {
 			ret = q6apm_write_async(prtd->graph, prtd->pcm_count, 0, 0, NO_TIMESTAMP);
 			if (ret < 0) {

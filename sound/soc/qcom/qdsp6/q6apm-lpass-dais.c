@@ -175,6 +175,8 @@ static int q6apm_lpass_dai_trigger(struct snd_pcm_substream *substream, int cmd,
 				dev_err(dai->dev, "Failed to start APM port %d\n", dai->id);
 			else
 				dai_data->is_port_started[dai->id] = true;
+			dev_info(dai->dev, "nord4-audio: be trigger start dai %d rc %d\n",
+				 dai->id, ret);
 		}
 		break;
 	default:
@@ -224,6 +226,8 @@ static int q6apm_lpass_dai_prepare(struct snd_pcm_substream *substream, struct s
 		dev_err(dai->dev, "Failed to prepare Graph %d\n", rc);
 		goto err;
 	}
+	dev_info(dai->dev, "nord4-audio: be prepare dai %d rate %u ch %u w %u\n", dai->id,
+		 cfg->sample_rate, cfg->num_channels, cfg->bit_width);
 	return 0;
 err:
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {

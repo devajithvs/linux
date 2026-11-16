@@ -1122,6 +1122,9 @@ static void audioreach_connect_sub_graphs(struct q6apm *apm,
 		info->dst_mod_inst_id = 0;
 		info->dst_mod_ip_port_id = 0;
 	}
+	dev_info(apm->dev, "nord4-audio: connect %d graph %d src %#x:%u dst %#x:%u\n",
+		 connect, m2->graph_id, info->src_mod_inst_id, info->src_mod_op_port_id,
+		 info->dst_mod_inst_id, info->dst_mod_ip_port_id);
 }
 
 static bool audioreach_is_vmixer_connected(struct q6apm *apm,

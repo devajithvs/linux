@@ -215,6 +215,7 @@ static int __q6apm_map_memory_fixed_region(struct device *dev, unsigned int grap
 	int payload_size = sizeof(*cmd) + (sizeof(*mregions));
 	uint32_t buf_sz;
 	void *p;
+	int ret;
 	uint32_t pos_mask = is_pos_buf ? APM_MMAP_TOKEN_MAP_TYPE_POS_BUF : 0;
 	struct gpr_pkt *pkt __free(kfree) = audioreach_alloc_apm_cmd_pkt(payload_size,
 					APM_CMD_SHARED_MEM_MAP_REGIONS, (graph_id | pos_mask));
@@ -252,7 +253,11 @@ static int __q6apm_map_memory_fixed_region(struct device *dev, unsigned int grap
 	mregions->shm_addr_msw = upper_32_bits(phys);
 	mregions->mem_size_bytes = buf_sz;
 
-	return q6apm_send_cmd_sync(apm, pkt, APM_CMD_RSP_SHARED_MEM_MAP_REGIONS);
+	ret = q6apm_send_cmd_sync(apm, pkt, APM_CMD_RSP_SHARED_MEM_MAP_REGIONS);
+	dev_info(dev, "nord4-audio: map graph %u phys %pa sz %u rc %d handle %#x\n",
+		 graph_id, &phys, buf_sz, ret,
+		 is_pos_buf ? info->pos_buf_mem_map_handle : info->mem_map_handle);
+	return ret;
 }
 
 int q6apm_map_pos_buffer(struct device *dev, unsigned int graph_id, phys_addr_t phys, size_t sz)
@@ -474,6 +479,7 @@ int q6apm_write_async(struct q6apm_graph *graph, uint32_t len, uint32_t msw_ts,
 {
 	struct apm_data_cmd_wr_sh_mem_ep_data_buffer_v2 *write_buffer;
 	struct audio_buffer *ab;
+	int ret;
 
 	struct gpr_pkt *pkt __free(kfree) = audioreach_alloc_pkt(sizeof(*write_buffer),
 					DATA_CMD_WR_SH_MEM_EP_DATA_BUFFER_V2,
@@ -502,7 +508,10 @@ int q6apm_write_async(struct q6apm_graph *graph, uint32_t len, uint32_t msw_ts,
 
 	mutex_unlock(&graph->lock);
 
-	return gpr_send_port_pkt(graph->port, pkt);
+	ret = gpr_send_port_pkt(graph->port, pkt);
+	dev_info(graph->dev, "nord4-audio: write_async port %u len %u buf %u phys %pa rc %d\n",
+		 graph->port->id, len, graph->rx_data.dsp_buf, &ab->phys, ret);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(q6apm_write_async);
 
@@ -567,6 +576,11 @@ static int graph_callback(const struct gpr_resp_pkt *data, void *priv, int op)
 	int token;
 
 	result = data->payload;
+
+	if (hdr->opcode == DATA_CMD_RSP_WR_SH_MEM_EP_DATA_BUFFER_DONE_V2 ||
+	    hdr->opcode == DATA_CMD_WR_SH_MEM_EP_EOS_RENDERED)
+		dev_info(dev, "nord4-audio: graph packet op %#x token %#x len %u\n",
+			 hdr->opcode, hdr->token, hdr->pkt_size);
 
 	switch (hdr->opcode) {
 	case APM_EVENT_MODULE_TO_CLIENT:
@@ -742,6 +756,8 @@ struct q6apm_graph *q6apm_graph_open(struct device *dev, q6apm_cb cb,
 	graph->ar_graph = ar_graph;
 	graph->id = ar_graph->id;
 	graph->dev = dev;
+	dev_info(dev, "nord4-audio: graph open id %u dir %d sub_graphs %u\n",
+		 graph->id, dir, graph->info->num_sub_graphs);
 
 	if (dir == SNDRV_PCM_STREAM_PLAYBACK) {
 		iid = q6apm_graph_get_module_iid(graph, MODULE_ID_SH_MEM_PULL_MODE);
@@ -795,7 +811,10 @@ EXPORT_SYMBOL_GPL(q6apm_graph_close);
 
 int q6apm_graph_prepare(struct q6apm_graph *graph)
 {
-	return audioreach_graph_mgmt_cmd(graph->ar_graph, APM_CMD_GRAPH_PREPARE);
+	int ret = audioreach_graph_mgmt_cmd(graph->ar_graph, APM_CMD_GRAPH_PREPARE);
+
+	dev_info(graph->dev, "nord4-audio: graph prepare id %u rc %d\n", graph->id, ret);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(q6apm_graph_prepare);
 
@@ -808,6 +827,8 @@ int q6apm_graph_start(struct q6apm_graph *graph)
 		ret = audioreach_graph_mgmt_cmd(ar_graph, APM_CMD_GRAPH_START);
 
 	ar_graph->start_count++;
+	dev_info(graph->dev, "nord4-audio: graph start id %u count %u rc %d\n",
+		 graph->id, ar_graph->start_count, ret);
 
 	return ret;
 }
@@ -816,11 +837,15 @@ EXPORT_SYMBOL_GPL(q6apm_graph_start);
 int q6apm_graph_stop(struct q6apm_graph *graph)
 {
 	struct audioreach_graph *ar_graph = graph->ar_graph;
+	int ret;
 
 	if (--ar_graph->start_count > 0)
 		return 0;
 
-	return audioreach_graph_mgmt_cmd(ar_graph, APM_CMD_GRAPH_STOP);
+	ret = audioreach_graph_mgmt_cmd(ar_graph, APM_CMD_GRAPH_STOP);
+	dev_info(graph->dev, "nord4-audio: graph stop id %u rc %d\n", graph->id, ret);
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(q6apm_graph_stop);
 
