@@ -20,6 +20,7 @@
 
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/linux-event-codes.h>
+#include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/leds/common.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
 #include <dt-bindings/sound/qcom,q6dsp-lpass-ports.h>
@@ -1220,6 +1221,62 @@
 
 &gpi_dma0 {
 	status = "okay";
+};
+
+/*
+ * The vibration motor. The downstream board file puts an Awinic haptics IC on
+ * qupv3_se3_i2c at address 0x5a, reset on TLMM 147, interrupt on TLMM 145, and
+ * the node's own comment names the part aw86927
+ * (android_kernel_modules_and_devicetree_oneplus_sm7675, branch
+ * oneplus/sm7675_b_16.0.0_nord_4, commit 150f7f8f3354dc680da90e83788bd25d9b983739,
+ * kernel_platform/qcom/proprietary/devicetree/oplus/oplus_misc/oplus-misc-24211.dtsi:36-60).
+ * The same file runs that bus at 1 MHz (:37) and disables the shared PM8550B
+ * haptics peripheral (:32-34), which mainline's pm7550ba.dtsi does not
+ * describe (69 lines, no haptics child). qupv3_se3_i2c is i2c@a8c000
+ * (palawan.dtsi:1867) with its data pins on gpio12/gpio13 in the qup0_se3
+ * function (palawan.dtsi:3884-3890), which the controller's own
+ * qup_i2c3_data_clk state already selects.
+ *
+ * The same board file also carries a second, alternative haptics node at 0x6b,
+ * compatible "silicon,sih_haptic_688X", on the same two GPIOs and also
+ * enabled (:62-76), so it does not say which of the two is populated. Only the
+ * Awinic side has a mainline driver: drivers/input/misc/aw86927.c, binding
+ * Documentation/devicetree/bindings/input/awinic,aw86927.yaml. The driver
+ * resets the part, reads the chip id at 0x57/0x58 and refuses anything but
+ * 0x9270 or 0x9380 (aw86927.c:737-762), so a board fitted with the other part
+ * fails that check and registers no input device; the probe result is what
+ * says which one this unit carries.
+ */
+&i2c3 {
+	status = "okay";
+	clock-frequency = <1000000>;
+
+	vibrator@5a {
+		compatible = "awinic,aw86927";
+		reg = <0x5a>;
+
+		interrupts-extended = <&tlmm 145 IRQ_TYPE_EDGE_FALLING>;
+		reset-gpios = <&tlmm 147 GPIO_ACTIVE_LOW>;
+
+		pinctrl-0 = <&aw86927_int_default>;
+		pinctrl-names = "default";
+	};
+};
+
+&tlmm {
+	/*
+	 * The interrupt line as the downstream board file configures it
+	 * (oplus-misc-24211.dtsi:15-30): 2 mA, input, pulled up. Its
+	 * input-enable is left out because the TLMM binding rejects that
+	 * property (qcom,tlmm-common.yaml:84); the line is requested as an
+	 * input through the interrupt.
+	 */
+	aw86927_int_default: aw86927-int-default-state {
+		pins = "gpio145";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
 };
 
 /*
