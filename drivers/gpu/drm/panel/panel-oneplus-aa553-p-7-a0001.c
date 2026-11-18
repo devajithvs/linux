@@ -429,25 +429,29 @@ static const struct drm_panel_funcs aa553_panel_funcs = {
 /*
  * The downstream panel is bl_ctrl_dcs with qcom,mdss-dsi-bl-inverted-dbv and
  * a 0..3999 12-bit range (dsi-panel-AA553-P-7-A0001-dsc-cmd.dtsi:866-869).
+ *
+ * "inverted dbv" is the DDIC's byte order, not an inverted scale: the vendor
+ * swaps the 16-bit level and then sends it with the little-endian DCS helper
+ * (oplus/oplus_display_panel_feature.c:620-651,
+ * mipi_dsi_dcs_set_display_brightness()), so the panel receives the level
+ * big-endian - which is what the _large() helper sends.  A complement
+ * (max - level) would put the top of the scale at DBV 0.
  */
 static int aa553_bl_update_status(struct backlight_device *bl)
 {
 	struct aa553_panel *ctx = bl_get_data(bl);
-	u16 brightness;
 
 	/*
 	 * Outside prepare()/unprepare() the rails are down and the panel does
 	 * not answer: a brightness write would sit out the DSI timeout and
 	 * fail. systemd-backlight does exactly that at boot and at shutdown,
-	 * so skip it; drm_panel_enable() calls backlight_enable() after
-	 * prepare() and the level is applied there.
+	 * so skip it; aa553_enable() applies the level once the panel is up.
 	 */
 	if (!ctx->prepared)
 		return 0;
 
-	brightness = bl->props.max_brightness - backlight_get_brightness(bl);
-
-	return mipi_dsi_dcs_set_display_brightness_large(ctx->dsi, brightness);
+	return mipi_dsi_dcs_set_display_brightness_large(ctx->dsi,
+			backlight_get_brightness(bl));
 }
 
 static const struct backlight_ops aa553_bl_ops = {
