@@ -231,13 +231,10 @@ static int aa553_on(struct aa553_panel *ctx)
 				     0x15, 0xe0, 0x15, 0xe0, 0x15, 0xe0, 0x15, 0xe0, 0x15, 0xe0,
 				     0x15, 0xe0, 0x15, 0xe0, 0x15, 0xe0);
 
-	/* HACK: nord4_dsc_pps_when 1 = before sleep-out, 2 = before display-on */
-	if (nord4_dsc_pps_when == 1)
-		aa553_send_pps(ctx, &dsi_ctx);
 	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
 	mipi_dsi_msleep(&dsi_ctx, 120);
-	if (nord4_dsc_pps_when == 2)
-		aa553_send_pps(ctx, &dsi_ctx);
+	/* Variant: the decoder is configured before display-on latches it. */
+	aa553_send_pps(ctx, &dsi_ctx);
 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
 
 	return dsi_ctx.accum_err;
@@ -300,10 +297,6 @@ static int aa553_prepare(struct drm_panel *panel)
 	ret = aa553_on(ctx);
 	if (ret < 0)
 		goto err_disable;
-
-	/* HACK: nord4_dsc_pps_when 0 = after display-on, today's order */
-	if (nord4_dsc_pps_when == 0)
-		aa553_send_pps(ctx, &dsi_ctx);
 
 	if (dsi_ctx.accum_err < 0) {
 		ret = dsi_ctx.accum_err;
