@@ -666,6 +666,15 @@ static void dsi_calc_pclk(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 	msm_host->byte_clk_rate = dsi_byte_clk_get_rate(&msm_host->base, is_bonded_dsi,
 							msm_host->mode);
 
+	/*
+	 * Variant 4: the vendor panel's qcom,mdss-dsi-panel-clockrate is
+	 * 1112000000, i.e. 1.112 Gbps per lane and a 139 MHz byte clock.  The
+	 * mode-derived rate is 908 Mbps (113.5 MHz byte).  Hypothesis: the
+	 * DDIC's DSC decoder needs the vendor link rate.
+	 */
+	if (msm_host->dsc)
+		msm_host->byte_clk_rate = 1112000000 / 8;
+
 	DBG("pclk=%lu, bclk=%lu", msm_host->pixel_clk_rate,
 				msm_host->byte_clk_rate);
 }
