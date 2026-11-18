@@ -420,8 +420,32 @@ static int aa553_get_modes(struct drm_panel *panel, struct drm_connector *connec
 	return drm_connector_helper_get_modes_fixed(connector, &aa553_mode);
 }
 
+/*
+ * A panel driver is what turns the backlight on: drm_panel_enable() does not.
+ * Without this the level is written only when userspace writes the sysfs file,
+ * which at boot happens while the panel is unprepared and is skipped, so the
+ * DDIC keeps whatever brightness its own reset left.
+ */
+static int aa553_enable(struct drm_panel *panel)
+{
+	struct aa553_panel *ctx = to_aa553_panel(panel);
+
+	return backlight_enable(ctx->panel.backlight);
+}
+
+static int aa553_disable(struct drm_panel *panel)
+{
+	struct aa553_panel *ctx = to_aa553_panel(panel);
+
+	backlight_disable(ctx->panel.backlight);
+
+	return 0;
+}
+
 static const struct drm_panel_funcs aa553_panel_funcs = {
 	.prepare = aa553_prepare,
+	.enable = aa553_enable,
+	.disable = aa553_disable,
 	.unprepare = aa553_unprepare,
 	.get_modes = aa553_get_modes,
 };
