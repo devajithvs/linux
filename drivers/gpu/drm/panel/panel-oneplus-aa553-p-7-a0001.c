@@ -461,9 +461,35 @@ static const struct drm_panel_funcs aa553_panel_funcs = {
  * big-endian - which is what the _large() helper sends.  A complement
  * (max - level) would put the top of the scale at DBV 0.
  */
+/*
+ * The vendor's HBM mode writes (dsi-panel-AA553-P-7-A0001-dsc-cmd.dtsi,
+ * qcom,mdss-dsi-hbm-off-command and -hbm-max-command): the OPLUS brightness
+ * path sends one of them around every DBV update, and hbm-max also writes the
+ * page-1 B6 boost registers.  The fork sends neither.
+ */
+static void aa553_hbm(struct aa553_panel *ctx, bool on)
+{
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
+
+	if (on) {
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52,
+					     0x08, 0x01);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb6, 0x00, 0x32, 0x00,
+					     0xc8, 0x01, 0x9a, 0x01, 0x04);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x51, 0x0f, 0xff);
+	} else {
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x51, 0x0d, 0xbb);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52,
+					     0x08, 0x00);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x01);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb5, 0x02);
+	}
+}
+
 static int aa553_bl_update_status(struct backlight_device *bl)
 {
 	struct aa553_panel *ctx = bl_get_data(bl);
+	unsigned int brightness;
 
 	/*
 	 * Outside prepare()/unprepare() the rails are down and the panel does
@@ -474,8 +500,11 @@ static int aa553_bl_update_status(struct backlight_device *bl)
 	if (!ctx->prepared)
 		return 0;
 
-	return mipi_dsi_dcs_set_display_brightness_large(ctx->dsi,
-			backlight_get_brightness(bl));
+	brightness = backlight_get_brightness(bl);
+
+	aa553_hbm(ctx, brightness >= 0xe7d);
+
+	return mipi_dsi_dcs_set_display_brightness_large(ctx->dsi, brightness);
 }
 
 static const struct backlight_ops aa553_bl_ops = {
