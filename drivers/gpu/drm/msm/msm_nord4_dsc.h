@@ -46,6 +46,10 @@ extern uint nord4_sspp_dump;
  * the command encoder's enable (re-enable fix candidate)
  */
 extern uint nord4_reenable_rearm;
+/* 0 = the tree's behaviour, 1 = force the SSPP clock on before programming it
+ * at the enable (re-enable fix candidate)
+ */
+extern uint nord4_sspp_clk_force;
 extern uint nord4_ctl_reset_on_enable;
 extern uint nord4_aa553_w1_reset_hold_us;
 extern uint nord4_aa553_w2_reset_settle_us;

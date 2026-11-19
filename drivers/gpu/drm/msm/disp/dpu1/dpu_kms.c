@@ -24,6 +24,7 @@
 
 #include "msm_drv.h"
 #include "msm_mmu.h"
+#include "msm_nord4_dsc.h"
 #include "msm_gem.h"
 #include "disp/msm_disp_snapshot.h"
 
@@ -437,16 +438,67 @@ static void dpu_kms_disable_vblank(struct msm_kms *kms, struct drm_crtc *crtc)
 	dpu_crtc_vblank(crtc, false);
 }
 
+/* HACK 2026-11-19 (F0252 follow-up): the re-enable's plane write is discarded
+ * although the commit took a runtime-PM reference; record the two devices' PM
+ * state, the commit's time, and a handful of global MDP/VBIF registers that
+ * only the power-on/resume path writes, so a power collapse that is not
+ * restored shows as a register diff.  Register reads only when regs is true
+ * (they fault on an unclocked MDP).
+ */
+void dpu_kms_nord4_state(struct dpu_kms *dpu_kms, const char *tag, bool regs)
+{
+	struct device *dev = &dpu_kms->pdev->dev;
+
+	pr_info("nord4-pm: %s t=%lldus dpu_suspended=%d mdss_suspended=%d\n",
+		tag, ktime_get_ns() / NSEC_PER_USEC,
+		pm_runtime_status_suspended(dev),
+		dev->parent ? pm_runtime_status_suspended(dev->parent) : -1);
+
+	if (!regs || !dpu_kms->mmio)
+		return;
+
+	pr_info("nord4-pm: %s mdp_top clk3=0x%x status3=0x%x clk4=0x%x status4=0x%x split=0x%x spare=0x%x intf_sel=0x%x\n",
+		tag,
+		readl_relaxed(dpu_kms->mmio + 0x3A8),
+		readl_relaxed(dpu_kms->mmio + 0x3AC),
+		readl_relaxed(dpu_kms->mmio + 0x3B0),
+		readl_relaxed(dpu_kms->mmio + 0x3B4),
+		readl_relaxed(dpu_kms->mmio + 0x2F4),
+		readl_relaxed(dpu_kms->mmio + 0x028),
+		readl_relaxed(dpu_kms->mmio + 0x004));
+	pr_info("nord4-pm: %s vbif version=0x%x clk_force0=0x%x clk_force1=0x%x memtype=0x%x,0x%x\n",
+		tag,
+		readl_relaxed(dpu_kms->vbif + 0x0000),
+		readl_relaxed(dpu_kms->vbif + 0x0008),
+		readl_relaxed(dpu_kms->vbif + 0x000C),
+		readl_relaxed(dpu_kms->vbif + 0x0160),
+		readl_relaxed(dpu_kms->vbif + 0x0164));
+}
+EXPORT_SYMBOL_GPL(dpu_kms_nord4_state);
+
 static void dpu_kms_enable_commit(struct msm_kms *kms)
 {
 	struct dpu_kms *dpu_kms = to_dpu_kms(kms);
-	pm_runtime_get_sync(&dpu_kms->pdev->dev);
+	int rc;
+
+	if (nord4_sspp_dump)
+		dpu_kms_nord4_state(dpu_kms, "enable_commit-before", false);
+	rc = pm_runtime_get_sync(&dpu_kms->pdev->dev);
+	if (nord4_sspp_dump) {
+		pr_info("nord4-pm: enable_commit get_sync rc=%d\n", rc);
+		dpu_kms_nord4_state(dpu_kms, "enable_commit-after", true);
+	}
 }
 
 static void dpu_kms_disable_commit(struct msm_kms *kms)
 {
 	struct dpu_kms *dpu_kms = to_dpu_kms(kms);
+
+	if (nord4_sspp_dump)
+		dpu_kms_nord4_state(dpu_kms, "disable_commit-before", true);
 	pm_runtime_put_sync(&dpu_kms->pdev->dev);
+	if (nord4_sspp_dump)
+		dpu_kms_nord4_state(dpu_kms, "disable_commit-after", false);
 }
 
 static int dpu_kms_check_mode_changed(struct msm_kms *kms, struct drm_atomic_commit *state)
@@ -1438,6 +1490,8 @@ static int __maybe_unused dpu_runtime_suspend(struct device *dev)
 	struct msm_drm_private *priv = platform_get_drvdata(pdev);
 	struct dpu_kms *dpu_kms = to_dpu_kms(priv->kms);
 
+	if (nord4_sspp_dump)
+		dpu_kms_nord4_state(dpu_kms, "runtime_suspend-before", true);
 	clk_bulk_disable_unprepare(dpu_kms->num_clocks, dpu_kms->clocks);
 
 	for (i = 0; i < dpu_kms->num_paths; i++)
@@ -1467,6 +1521,9 @@ static int __maybe_unused dpu_runtime_resume(struct device *dev)
 
 	drm_for_each_encoder(encoder, ddev)
 		dpu_encoder_virt_runtime_resume(encoder);
+
+	if (nord4_sspp_dump)
+		dpu_kms_nord4_state(dpu_kms, "runtime_resume-after", true);
 
 	return rc;
 }

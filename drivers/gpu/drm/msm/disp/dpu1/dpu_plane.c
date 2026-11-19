@@ -1560,6 +1560,24 @@ static void dpu_plane_sspp_atomic_update(struct drm_plane *plane,
 
 	dpu_format_populate_addrs(new_state->fb, &pstate->layout);
 
+	/*
+	 * HACK 2026-11-19 (F0252 follow-up): candidate for the discarded write —
+	 * force the SSPP's own clock on (SSPP_CLK_CTRL bit 0) before this
+	 * commit's writes.  The op returns whether the gate was closed.
+	 */
+	if (nord4_sspp_clk_force) {
+		for (i = 0; i < PIPES_PER_PLANE; i++) {
+			if (!pstate->pipe[i].sspp ||
+			    !drm_rect_width(&pstate->pipe_cfg[i].src_rect))
+				continue;
+			if (pstate->pipe[i].sspp->ops.setup_clk_force_ctrl)
+				pr_info("nord4-sspp: clk_force sspp=%d was_gated=%d\n",
+					pstate->pipe[i].sspp->idx,
+					pstate->pipe[i].sspp->ops.setup_clk_force_ctrl(
+						pstate->pipe[i].sspp, true));
+		}
+	}
+
 	DPU_DEBUG_PLANE(pdpu, "FB[%u] " DRM_RECT_FP_FMT "->crtc%u " DRM_RECT_FMT
 			", %p4cc ubwc %d\n", fb->base.id, DRM_RECT_FP_ARG(&state->src),
 			crtc->base.id, DRM_RECT_ARG(&state->dst),
@@ -1685,15 +1703,24 @@ static void dpu_plane_atomic_update(struct drm_plane *plane,
 	} else {
 		dpu_plane_sspp_atomic_update(plane, new_state);
 
-		/* HACK 2026-11-19 (F0250): what the SSPP's registers hold now */
+		/* HACK 2026-11-19 (F0250/F0252): what the SSPP's registers hold
+		 * now, whether it accepts a write, and the commit's PM state.
+		 */
 		if (nord4_sspp_dump) {
 			struct dpu_plane_state *nps = to_dpu_plane_state(new_state);
+			struct dpu_kms *kms;
+
+			kms = _dpu_plane_get_kms(plane);
+			if (kms)
+				dpu_kms_nord4_state(kms, "plane-update", false);
 
 			for (i = 0; i < PIPES_PER_PLANE; i++) {
 				if (!nps->pipe[i].sspp)
 					continue;
 				dpu_hw_sspp_nord4_dump(nps->pipe[i].sspp,
 						       "plane-update");
+				dpu_hw_sspp_nord4_probe(nps->pipe[i].sspp,
+							"plane-update");
 			}
 		}
 	}
@@ -1751,6 +1778,38 @@ void dpu_plane_nord4_rearm(struct drm_crtc *crtc)
 						   &pstate->pipe_cfg[i], fmt,
 						   drm_mode_vrefresh(&crtc->state->adjusted_mode),
 						   &pstate->layout);
+		}
+	}
+}
+
+/* HACK 2026-11-19 (F0252 follow-up): sentinel write/read of SRC0 on every
+ * active pipe, plus the SSPP clock state, at a named moment of the commit.
+ */
+void dpu_plane_nord4_probe(struct drm_crtc *crtc, const char *tag)
+{
+	struct drm_plane *plane;
+
+	if (!nord4_sspp_dump || !crtc || !crtc->state)
+		return;
+
+	drm_atomic_crtc_for_each_plane(plane, crtc) {
+		struct drm_plane_state *state = plane->state;
+		struct dpu_plane_state *pstate;
+		struct dpu_kms *kms;
+		int i;
+
+		if (!state || !state->visible)
+			continue;
+
+		kms = _dpu_plane_get_kms(plane);
+		if (kms)
+			dpu_kms_nord4_state(kms, tag, false);
+
+		pstate = to_dpu_plane_state(state);
+		for (i = 0; i < PIPES_PER_PLANE; i++) {
+			if (!pstate->pipe[i].sspp)
+				continue;
+			dpu_hw_sspp_nord4_probe(pstate->pipe[i].sspp, tag);
 		}
 	}
 }

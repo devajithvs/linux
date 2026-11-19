@@ -169,4 +169,7 @@ void dpu_disable_vblank(struct msm_kms *kms, struct drm_crtc *crtc);
 
 unsigned long dpu_kms_get_clk_rate(struct dpu_kms *dpu_kms, char *clock_name);
 
+/* HACK 2026-11-19 (F0252 follow-up): PM state and MDP/VBIF state markers. */
+void dpu_kms_nord4_state(struct dpu_kms *dpu_kms, const char *tag, bool regs);
+
 #endif /* __dpu_kms_H__ */

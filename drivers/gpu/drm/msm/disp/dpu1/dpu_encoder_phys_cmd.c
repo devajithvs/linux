@@ -470,6 +470,8 @@ static void dpu_encoder_phys_cmd_enable_helper(
 	 * still stopped and before the interface config arms the flush, so the
 	 * SSPP address the flush latches is written in this commit.
 	 */
+	if (phys_enc->parent->crtc)
+		dpu_plane_nord4_probe(phys_enc->parent->crtc, "enable");
 	if (nord4_reenable_rearm && phys_enc->parent->crtc)
 		dpu_plane_nord4_rearm(phys_enc->parent->crtc);
 

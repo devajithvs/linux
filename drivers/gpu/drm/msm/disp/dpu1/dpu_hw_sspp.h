@@ -337,6 +337,12 @@ struct dpu_hw_sspp *dpu_hw_sspp_init(struct drm_device *dev,
  */
 void dpu_hw_sspp_nord4_dump(struct dpu_hw_sspp *ctx, const char *tag);
 
+/* HACK 2026-11-19 (F0252 follow-up): sentinel write/read of SRC0 and the
+ * SSPP clock control/status, so a write that is discarded can be told from one
+ * that lands and is later lost.
+ */
+void dpu_hw_sspp_nord4_probe(struct dpu_hw_sspp *ctx, const char *tag);
+
 int _dpu_hw_sspp_init_debugfs(struct dpu_hw_sspp *hw_pipe, struct dpu_kms *kms,
 			      struct dentry *entry);
 

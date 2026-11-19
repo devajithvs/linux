@@ -109,6 +109,16 @@ module_param_named(nord4_reenable_rearm, nord4_reenable_rearm, uint, 0644);
 MODULE_PARM_DESC(nord4_reenable_rearm, "1 = re-program the visible planes at the cmd-encoder enable (re-enable fix candidate)");
 EXPORT_SYMBOL_GPL(nord4_reenable_rearm);
 
+/* HACK 2026-11-19 (F0252 follow-up): the re-enable's SSPP write is discarded
+ * while the same write later in the commit lands.  Candidate: force the SSPP's
+ * own clock on (SSPP_CLK_CTRL bit 0) before programming it.  0 = the tree's
+ * behaviour.
+ */
+uint nord4_sspp_clk_force;
+module_param_named(nord4_sspp_clk_force, nord4_sspp_clk_force, uint, 0644);
+MODULE_PARM_DESC(nord4_sspp_clk_force, "1 = force the SSPP clock on before programming it at the enable (candidate)");
+EXPORT_SYMBOL_GPL(nord4_sspp_clk_force);
+
 /* HACK 2026-11-19: candidate for the disable->enable IOVA-0 fault (F0214,
  * F0246): reset the CTL's cached flush state at the command encoder's enable,
  * before the pingpong/intf are reconfigured.  0 = the tree's behaviour.

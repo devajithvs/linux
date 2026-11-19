@@ -75,6 +75,8 @@
 #define SSPP_UBWC_STATIC_CTRL_REC1         0x1c0
 #define SSPP_UBWC_ERROR_STATUS_REC1        0x1c8
 #define SSPP_CLK_CTRL                      0x330
+/* vendor qcom,sde-sspp-clk-status: the clk-ctrl register + 4 */
+#define SSPP_CLK_STATUS                    0x334
 
 /* SSPP_SRC_OP_MODE & OP_MODE_REC1 */
 #define MDSS_MDP_OP_DEINTERLACE            BIT(22)
@@ -650,6 +652,40 @@ void dpu_hw_sspp_nord4_dump(struct dpu_hw_sspp *ctx, const char *tag)
 		DPU_REG_READ(&ctx->hw, SSPP_UBWC_STATIC_CTRL),
 		DPU_REG_READ(&ctx->hw, SSPP_SRC_ADDR_SW_STATUS),
 		DPU_REG_READ(&ctx->hw, SSPP_MULTIRECT_OPMODE));
+	pr_info("nord4-sspp: %s clk id=%d ctrl=0x%x status=0x%x\n", tag, ctx->idx,
+		DPU_REG_READ(&ctx->hw, SSPP_CLK_CTRL),
+		DPU_REG_READ(&ctx->hw, SSPP_CLK_STATUS));
+}
+
+/* HACK 2026-11-19 (F0252 follow-up): does this SSPP accept a write right now?
+ * Write a sentinel to SRC0, read it back, restore the old value and read it
+ * back again.  A block whose register file is not up reads its reset value and
+ * discards the write, which is what the re-enable looked like; a block that
+ * accepts it returns the sentinel.  Restoring the old value keeps the probe
+ * harmless when the write lands (the pipe is programmed later in the same
+ * commit and no flush is armed yet).
+ */
+void dpu_hw_sspp_nord4_probe(struct dpu_hw_sspp *ctx, const char *tag)
+{
+	u32 before, after_sentinel, after_restore;
+	const u32 sentinel = 0xdead0000;
+
+	if (!ctx)
+		return;
+
+	before = DPU_REG_READ(&ctx->hw, SSPP_SRC0_ADDR);
+	DPU_REG_WRITE(&ctx->hw, SSPP_SRC0_ADDR, sentinel);
+	wmb();
+	after_sentinel = DPU_REG_READ(&ctx->hw, SSPP_SRC0_ADDR);
+	DPU_REG_WRITE(&ctx->hw, SSPP_SRC0_ADDR, before);
+	wmb();
+	after_restore = DPU_REG_READ(&ctx->hw, SSPP_SRC0_ADDR);
+
+	pr_info("nord4-probe: %s id=%d base=0x%x before=0x%x sentinel_read=0x%x landed=%d restore_read=0x%x clk=0x%x clk_status=0x%x\n",
+		tag, ctx->idx, ctx->cap->base, before, after_sentinel,
+		after_sentinel == sentinel, after_restore,
+		DPU_REG_READ(&ctx->hw, SSPP_CLK_CTRL),
+		DPU_REG_READ(&ctx->hw, SSPP_CLK_STATUS));
 }
 
 static void _setup_layer_ops(struct dpu_hw_sspp *c,
