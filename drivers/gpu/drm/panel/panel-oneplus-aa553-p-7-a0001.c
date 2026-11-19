@@ -257,11 +257,15 @@ static int aa553_on(struct aa553_panel *ctx)
 	}
 
 	if (nord4_dd17 >= 0) {
+		u8 v = nord4_dd17 & 0xff;
+		ssize_t ret;
+
 		aa553_switch_page(&dsi_ctx, 0x01);
-		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x17, nord4_dd17 & 0xff);
+		ret = mipi_dsi_dcs_write(dsi, 0x17, &v, 1);
+		if (ret < 0)
+			dsi_ctx.accum_err = (int)ret;
 		aa553_switch_page(&dsi_ctx, 0x00);
-		pr_info("nord4-geo: P5 page-1 0x17=0x%02x after 0x29\n",
-			nord4_dd17 & 0xff);
+		pr_info("nord4-geo: P5 page-1 0x17=0x%02x after 0x29\n", v);
 	}
 
 	return dsi_ctx.accum_err;
