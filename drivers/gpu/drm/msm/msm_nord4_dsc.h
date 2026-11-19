@@ -38,6 +38,7 @@ extern uint nord4_dsc_merge;
 extern uint nord4_dsc_readback;
 /* 0 = quiet, 1 = dump the DSI/DPU/DSC registers at every mode set */
 extern uint nord4_dsc_dump;
+extern uint nord4_ctl_reset_on_enable;
 extern uint nord4_aa553_w1_reset_hold_us;
 extern uint nord4_aa553_w2_reset_settle_us;
 extern uint nord4_aa553_w3_pps_ms;

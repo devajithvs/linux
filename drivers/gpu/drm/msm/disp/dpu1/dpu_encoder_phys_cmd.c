@@ -7,6 +7,7 @@
 #include <linux/delay.h>
 #include <linux/string_choices.h>
 #include "dpu_encoder_phys.h"
+#include "msm_nord4_dsc.h"
 #include "dpu_hw_interrupts.h"
 #include "dpu_hw_pingpong.h"
 #include "dpu_core_irq.h"
@@ -66,6 +67,9 @@ static void _dpu_encoder_phys_cmd_update_intf_cfg(
 	intf_cfg.stream_sel = cmd_enc->stream_sel;
 	intf_cfg.mode_3d = dpu_encoder_helper_get_3d_blend_mode(phys_enc);
 	intf_cfg.dsc = dpu_encoder_helper_get_dsc(phys_enc);
+	pr_info("nord4-reen: intf=%d dsc=%d master=%d stream=%u ctl_pending=0x%x\n",
+		intf_cfg.intf, intf_cfg.dsc, intf_cfg.intf_master, intf_cfg.stream_sel,
+		ctl->ops.get_pending_flush(ctl));
 	ctl->ops.setup_intf_cfg(ctl, &intf_cfg);
 
 	/* setup which pp blk will connect to this intf */
@@ -461,6 +465,12 @@ static void dpu_encoder_phys_cmd_enable_helper(
 
 	dpu_encoder_helper_split_config(phys_enc, phys_enc->hw_intf->idx);
 
+	if (nord4_ctl_reset_on_enable) {
+		ctl = phys_enc->hw_ctl;
+		pr_info("nord4-reen: CTL reset on enable, pending_before=0x%x rc=%d\n",
+			ctl->ops.get_pending_flush(ctl), ctl->ops.reset(ctl));
+	}
+
 	_dpu_encoder_phys_cmd_pingpong_config(phys_enc);
 
 	ctl = phys_enc->hw_ctl;
@@ -573,6 +583,8 @@ static void dpu_encoder_phys_cmd_disable(struct dpu_encoder_phys *phys_enc)
 
 		ctl = phys_enc->hw_ctl;
 		ctl->ops.update_pending_flush_intf(ctl, phys_enc->hw_intf->idx);
+		pr_info("nord4-reen: disable, ctl_pending_after_unbind=0x%x\n",
+			ctl->ops.get_pending_flush(ctl));
 	}
 
 	phys_enc->enable_state = DPU_ENC_DISABLED;

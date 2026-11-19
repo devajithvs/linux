@@ -86,3 +86,12 @@ uint nord4_aa553_w4_sleepout_ms = 240;
 module_param_named(nord4_aa553_w4_sleepout_ms, nord4_aa553_w4_sleepout_ms, uint, 0644);
 MODULE_PARM_DESC(nord4_aa553_w4_sleepout_ms, "wait between sleep-out and display-on, ms (vendor 120)");
 EXPORT_SYMBOL_GPL(nord4_aa553_w4_sleepout_ms);
+
+/* HACK 2026-11-19: candidate for the disable->enable IOVA-0 fault (F0214,
+ * F0246): reset the CTL's cached flush state at the command encoder's enable,
+ * before the pingpong/intf are reconfigured.  0 = the tree's behaviour.
+ */
+uint nord4_ctl_reset_on_enable;
+module_param_named(nord4_ctl_reset_on_enable, nord4_ctl_reset_on_enable, uint, 0644);
+MODULE_PARM_DESC(nord4_ctl_reset_on_enable, "1 = CTL reset at cmd-encoder enable (re-enable fix candidate)");
+EXPORT_SYMBOL_GPL(nord4_ctl_reset_on_enable);
