@@ -29,7 +29,6 @@
 #include "dsi_cfg.h"
 #include "msm_dsc_helper.h"
 #include "msm_kms.h"
-#include "msm_nord4_dsc.h"
 #include "msm_gem.h"
 #include "phy/dsi_phy.h"
 
@@ -799,10 +798,6 @@ bool msm_dsi_host_is_wide_bus_enabled(struct mipi_dsi_host *host)
 {
 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
 
-	/* HACK: nord4_dsc_widebus 1 = force on, 2 = force off (F0151, F0153) */
-	if (nord4_dsc_widebus)
-		return nord4_dsc_widebus == 1;
-
 	return msm_host->dsc &&
 		msm_dsi_host_version_geq(msm_host, MSM_DSI_VER_MAJOR_6G,
 					MSM_DSI_6G_VER_MINOR_V2_5_0);
@@ -944,18 +939,13 @@ static void dsi_update_dsc_timing(struct msm_dsi_host *msm_host, bool is_cmd_mod
 	 */
 	slice_per_intf = dsc->slice_count;
 
-	/* HACK: nord4_dsc_* sweep knobs (F0151, F0153) */
-	slice_per_pkt = nord4_dsc_slice_per_pkt ?: msm_host->dsc_slice_per_pkt;
+	slice_per_pkt = msm_host->dsc_slice_per_pkt;
 	total_bytes_per_intf = dsc->slice_chunk_size * slice_per_intf;
 	bytes_per_pkt = dsc->slice_chunk_size * slice_per_pkt;
 
-	eol_byte_num = nord4_dsc_eol < 0 ? total_bytes_per_intf % 3 : nord4_dsc_eol & 3;
+	eol_byte_num = total_bytes_per_intf % 3;
 
 	pkt_per_line = slice_per_intf / slice_per_pkt;
-	if (nord4_dsc_stream == 3)
-		pkt_per_line = slice_per_intf;
-	else if (nord4_dsc_stream == 4)
-		pkt_per_line = 1;
 
 	if (is_cmd_mode) /* packet data type */
 		reg = DSI_COMMAND_COMPRESSION_MODE_CTRL_STREAM0_DATATYPE(MIPI_DSI_DCS_LONG_WRITE);
@@ -1011,25 +1001,6 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 
 	DBG("");
 
-	/* HACK: the DSI state before we program anything, i.e. the bootloader's */
-	if (nord4_dsc_dump)
-		pr_info("nord4-dsc: dsi before CTRL=0x%08x CLK_CTRL=0x%08x LANE_CTRL=0x%08x "
-			"ACTIVE_H=0x%08x ACTIVE_V=0x%08x TOTAL=0x%08x TRIG=0x%08x "
-			"STREAM0_CTRL=0x%08x STREAM0_TOTAL=0x%08x COMP_CTRL=0x%08x "
-			"COMP_CTRL2=0x%08x MDP_CTRL2=0x%08x VERSION=0x%08x\\n",
-			dsi_read(msm_host, REG_DSI_CTRL),
-			dsi_read(msm_host, REG_DSI_CLK_CTRL),
-			dsi_read(msm_host, REG_DSI_LANE_CTRL),
-			dsi_read(msm_host, REG_DSI_ACTIVE_H),
-			dsi_read(msm_host, REG_DSI_ACTIVE_V),
-			dsi_read(msm_host, REG_DSI_TOTAL),
-			dsi_read(msm_host, REG_DSI_TRIG_CTRL),
-			dsi_read(msm_host, REG_DSI_CMD_MDP_STREAM0_CTRL),
-			dsi_read(msm_host, REG_DSI_CMD_MDP_STREAM0_TOTAL),
-			dsi_read(msm_host, REG_DSI_COMMAND_COMPRESSION_MODE_CTRL),
-			dsi_read(msm_host, REG_DSI_COMMAND_COMPRESSION_MODE_CTRL2),
-			dsi_read(msm_host, REG_DSI_CMD_MODE_MDP_CTRL2),
-			dsi_read(msm_host, REG_DSI_VERSION));
 
 	/*
 	 * For bonded DSI mode, the current DRM mode has
@@ -1133,15 +1104,6 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 			wc = msm_host->dsc->slice_chunk_size *
 				msm_host->dsc_slice_per_pkt + 1;
 
-		/* HACK: nord4_dsc_stream sweep knob (F0151, F0153) */
-		if (msm_host->dsc) {
-			if (nord4_dsc_stream == 1)
-				wc = msm_host->dsc->slice_chunk_size *
-					msm_host->dsc->slice_count + 1;
-			else if (nord4_dsc_stream == 2)
-				wc = msm_host->dsc->slice_chunk_size + 1;
-		}
-
 		dsi_write(msm_host, REG_DSI_CMD_MDP_STREAM0_CTRL,
 			DSI_CMD_MDP_STREAM0_CTRL_WORD_COUNT(wc) |
 			DSI_CMD_MDP_STREAM0_CTRL_VIRTUAL_CHANNEL(
@@ -1154,36 +1116,6 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 			DSI_CMD_MDP_STREAM0_TOTAL_V_TOTAL(mode->vdisplay));
 	}
 
-	/* HACK: the register state our mode set leaves, for the golden diff */
-	if (nord4_dsc_dump) {
-		static const struct {
-			const char *name;
-			u32 reg;
-		} dump[] = {
-			{ "CTRL", REG_DSI_CTRL },
-			{ "CLK_CTRL", REG_DSI_CLK_CTRL },
-			{ "LANE_CTRL", REG_DSI_LANE_CTRL },
-			{ "ACTIVE_H", REG_DSI_ACTIVE_H },
-			{ "ACTIVE_V", REG_DSI_ACTIVE_V },
-			{ "TOTAL", REG_DSI_TOTAL },
-			{ "TRIG_CTRL", REG_DSI_TRIG_CTRL },
-			{ "CMD_MDP_STREAM0_CTRL", REG_DSI_CMD_MDP_STREAM0_CTRL },
-			{ "CMD_MDP_STREAM0_TOTAL", REG_DSI_CMD_MDP_STREAM0_TOTAL },
-			{ "CMD_COMPRESSION_MODE_CTRL", REG_DSI_COMMAND_COMPRESSION_MODE_CTRL },
-			{ "CMD_COMPRESSION_MODE_CTRL2", REG_DSI_COMMAND_COMPRESSION_MODE_CTRL2 },
-			{ "CMD_MODE_MDP_CTRL2", REG_DSI_CMD_MODE_MDP_CTRL2 },
-			{ "VERSION", REG_DSI_VERSION },
-		};
-		int k;
-
-		for (k = 0; k < ARRAY_SIZE(dump); k++)
-			pr_info("nord4-dsc: dsi %s = 0x%08x\n", dump[k].name,
-				dsi_read(msm_host, dump[k].reg));
-		pr_info("nord4-dsc: dsi mode_flags 0x%lx cmd=%d hdisplay=%u vdisplay=%u\n",
-			(unsigned long)msm_host->mode_flags,
-			!(msm_host->mode_flags & MIPI_DSI_MODE_VIDEO), hdisplay,
-			mode->vdisplay);
-	}
 }
 
 static void dsi_sw_reset(struct msm_dsi_host *msm_host)
@@ -1964,10 +1896,6 @@ static int dsi_populate_dsc_params(struct msm_dsi_host *msm_host, struct drm_dsc
 	dsc->convert_rgb = 1;
 	dsc->vbr_enable = 0;
 
-	/* HACK: nord4_dsc_bpp, else the panel's value (F0151, F0153) */
-	if (nord4_dsc_bpp)
-		dsc->bits_per_pixel = nord4_dsc_bpp;
-
 	drm_dsc_set_const_params(dsc);
 	drm_dsc_set_rc_buf_thresh(dsc);
 
@@ -1977,12 +1905,7 @@ static int dsi_populate_dsc_params(struct msm_dsi_host *msm_host, struct drm_dsc
 	 * legacy one. The DPU programs its encoder from these same fields, so
 	 * both ends must come from the one table.
 	 */
-	/* HACK: nord4_dsc_rc_table 1 = pre-SCR, 2 = 1.2 4:4:4 (F0151, F0153) */
-	if (nord4_dsc_rc_table == 1)
-		ret = drm_dsc_setup_rc_params(dsc, DRM_DSC_1_1_PRE_SCR);
-	else if (nord4_dsc_rc_table == 2)
-		ret = drm_dsc_setup_rc_params(dsc, DRM_DSC_1_2_444);
-	else if (dsc->dsc_version_minor >= 2)
+	if (dsc->dsc_version_minor >= 2)
 		ret = drm_dsc_setup_rc_params(dsc, DRM_DSC_1_2_444);
 	else
 		ret = drm_dsc_setup_rc_params(dsc, DRM_DSC_1_1_PRE_SCR);

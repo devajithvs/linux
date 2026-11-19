@@ -20,13 +20,6 @@
 #include <drm/display/drm_dsc.h>
 #include <drm/display/drm_dsc_helper.h>
 
-/*
- * HACK: the runtime sweep knobs, defined and exported by the msm driver
- * (drivers/gpu/drm/msm/msm_nord4_dsc.c); F0151, F0153.  They default to 0,
- * today's behaviour, and go away once the picture is right.
- */
-extern uint nord4_dsc_pps_when;
-extern uint nord4_dsc_readback;
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_modes.h>
 #include <drm/drm_panel.h>
@@ -104,46 +97,6 @@ static void aa553_send_pps(struct aa553_panel *ctx,
 
 	/* vendor PPS-to-display-on 28 ms, doubled */
 	mipi_dsi_msleep(dsi_ctx, 56);
-}
-
-/*
- * HACK 2026-11-19: the init table's own writes, read back after the same page
- * unlock, so a dropped write is a number and not a guess.
- */
-static void aa553_verify_pages(struct aa553_panel *ctx,
-			       struct mipi_dsi_multi_context *dsi_ctx)
-{
-	static const struct {
-		u8 page, cmd, len;
-		u8 expect[4];
-	} reads[] = {
-		{ 0x01, 0xc5, 4, { 0x15, 0x15, 0x15, 0xdd } },
-		{ 0x01, 0xfe, 1, { 0x3c } },
-		{ 0x1a, 0xf4, 1, { 0x55 } },
-		{ 0x12, 0xfe, 1, { 0x41 } },
-	};
-	u8 buf[4];
-	int i, ret;
-
-	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
-	for (i = 0; i < ARRAY_SIZE(reads); i++) {
-		/* the page is a runtime value: the _seq_multi macro needs a
-		 * compile-time initializer, so send the switch directly
-		 */
-		u8 sw[5] = { 0x55, 0xaa, 0x52, 0x08, reads[i].page };
-
-		mipi_dsi_dcs_write(dsi_ctx->dsi, AA553_DCS_SWITCH_PAGE, sw, sizeof(sw));
-		mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xff, 0xaa, 0x55, 0xa5, 0x81);
-		memset(buf, 0xff, sizeof(buf));
-		ret = mipi_dsi_dcs_read(ctx->dsi, reads[i].cmd, buf, reads[i].len);
-		pr_info("nord4-panel: verify page 0x%02x cmd 0x%02x ret=%d got %*phN expected %*phN %s\n",
-			reads[i].page, reads[i].cmd, ret, reads[i].len, buf,
-			reads[i].len, reads[i].expect,
-			(ret == reads[i].len &&
-			 !memcmp(buf, reads[i].expect, reads[i].len)) ? "MATCH" : "DIFF");
-	}
-	aa553_switch_page(dsi_ctx, 0x00);
-	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
 }
 
 static int aa553_on(struct aa553_panel *ctx)
@@ -281,18 +234,10 @@ static int aa553_on(struct aa553_panel *ctx)
 				     0x15, 0xe0, 0x15, 0xe0, 0x15, 0xe0, 0x15, 0xe0, 0x15, 0xe0,
 				     0x15, 0xe0, 0x15, 0xe0, 0x15, 0xe0);
 
-	/* HACK: nord4_dsc_pps_when 1 = before sleep-out, 2 = before display-on */
-	if (nord4_dsc_pps_when == 1)
-		aa553_send_pps(ctx, &dsi_ctx);
 	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
 	/* vendor 0x78 = 120 ms after sleep-out, doubled */
 	mipi_dsi_msleep(&dsi_ctx, 240);
-	if (nord4_dsc_pps_when == 2)
-		aa553_send_pps(ctx, &dsi_ctx);
 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
-
-	if (dsi_ctx.accum_err == 0)
-		aa553_verify_pages(ctx, &dsi_ctx);
 
 	return dsi_ctx.accum_err;
 }
@@ -330,10 +275,12 @@ static int aa553_prepare(struct drm_panel *panel)
 	int ret;
 
 	/*
-	 * HACK 2026-11-19: the bootloader leaves both rails on and the panel
+	 * Root cause (F0239, F0244): a first mode set after a warm boot lit
+	 * only 1/6 because the bootloader leaves both rails on and the panel
 	 * running, so a plain regulator_enable() is a no-op and the DDIC never
-	 * sees a real power cycle.  Force the vendor's power-off first: reset
-	 * asserted, vci off, vddio off, 200 ms.
+	 * sees a real power cycle; a hot reset of a running panel is the race.
+	 * Force the vendor's power-off first: reset asserted, vci off, vddio
+	 * off, 200 ms, and give every vendor wait double its value.
 	 */
 	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
 	regulator_force_disable(ctx->supplies[1].consumer);
@@ -341,10 +288,8 @@ static int aa553_prepare(struct drm_panel *panel)
 	usleep_range(200000, 210000);
 
 	ret = regulator_enable(ctx->supplies[0].consumer);
-	if (ret < 0) {
-		pr_err("nord4-panel: prepare: vddio enable ret=%d\n", ret);
+	if (ret < 0)
 		return ret;
-	}
 
 	/* vendor 2 ms post-on, doubled */
 	usleep_range(4000, 5000);
@@ -358,10 +303,8 @@ static int aa553_prepare(struct drm_panel *panel)
 	usleep_range(2000, 3000);
 
 	ret = regulator_enable(ctx->supplies[1].consumer);
-	if (ret < 0) {
-		pr_err("nord4-panel: prepare: vci enable ret=%d\n", ret);
+	if (ret < 0)
 		goto err_disable_vddio;
-	}
 
 	/* vendor 15 ms after vci, doubled */
 	usleep_range(30000, 31000);
@@ -371,19 +314,14 @@ static int aa553_prepare(struct drm_panel *panel)
 	usleep_range(2000, 3000);
 
 	ret = aa553_on(ctx);
-	pr_info("nord4-panel: prepare: on ret=%d accum=%d\n", ret, dsi_ctx.accum_err);
-	if (ret < 0) {
-		pr_err("nord4-panel: prepare: the on table failed, accum=%d\n", dsi_ctx.accum_err);
+	if (ret < 0)
 		goto err_disable;
-	}
 
-	/* HACK: nord4_dsc_pps_when 0 = after display-on, today's order */
-	if (nord4_dsc_pps_when == 0)
-		aa553_send_pps(ctx, &dsi_ctx);
+	/* the vendor sends the PPS from the frame update, after display-on */
+	aa553_send_pps(ctx, &dsi_ctx);
 
 	if (dsi_ctx.accum_err < 0) {
 		ret = dsi_ctx.accum_err;
-		pr_err("nord4-panel: prepare: pps accum=%d\n", dsi_ctx.accum_err);
 		goto err_disable;
 	}
 
@@ -395,8 +333,6 @@ static int aa553_prepare(struct drm_panel *panel)
 	 */
 	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
 	ctx->prepared = true;
-	pr_info("nord4-panel: prepare: ok, accum=%d prepared=%d\n",
-		dsi_ctx.accum_err, ctx->prepared);
 
 	return 0;
 
@@ -407,62 +343,9 @@ err_disable_vddio:
 	return ret;
 }
 
-/* HACK: the DDIC's own status, so the sweep needs no eyes (F0151, F0153).
- *
- * 0x0a, 0x91, 0x03 and 0x2b with their expected bytes are the vendor's own
- * ESD check (qcom,mdss-dsi-panel-status-command/-value,
- * dsi-panel-AA553-P-7-A0001-dsc-cmd.dtsi:893-900); the rest are the MIPI DCS
- * status reads, printed with their return value so a rejected read is visible.
- */
-struct aa553_dcs_read {
-	u8 cmd;
-	u8 len;
-	bool expected;
-	u8 expect[4];
-};
-
-static void aa553_readback(struct aa553_panel *ctx)
-{
-	static const struct aa553_dcs_read reads[] = {
-		{ 0x0a, 1, true,  { 0x9c } },
-		{ 0x91, 1, true,  { 0xab } },
-		{ 0x03, 1, true,  { 0x00 } },
-		{ 0x2b, 4, true,  { 0x00, 0x0a, 0xd3 } },
-		{ 0x0c, 1, false, { } },
-		{ 0x0d, 1, false, { } },
-		{ 0x0e, 1, false, { } },
-		{ 0x0f, 1, false, { } },
-		{ 0x05, 1, false, { } },
-	};
-	u8 buf[4];
-	int i, ret;
-
-	/* a DCS read is a low-power-mode transfer */
-	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
-	for (i = 0; i < ARRAY_SIZE(reads); i++) {
-		const struct aa553_dcs_read *r = &reads[i];
-
-		memset(buf, 0xff, sizeof(buf));
-		ret = mipi_dsi_dcs_read(ctx->dsi, r->cmd, buf, r->len);
-		if (!r->expected) {
-			pr_info("nord4-dsc: dcs 0x%02x ret=%d %*phN\n", r->cmd, ret,
-				r->len, buf);
-			continue;
-		}
-		pr_info("nord4-dsc: dcs 0x%02x ret=%d %*phN expected %*phN %s\n",
-			r->cmd, ret, r->len, buf, r->len, r->expect,
-			memcmp(buf, r->expect, r->len) ? "DIFF" : "MATCH");
-	}
-	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
-}
-
 static int aa553_unprepare(struct drm_panel *panel)
 {
 	struct aa553_panel *ctx = to_aa553_panel(panel);
-
-	/* HACK: read the panel's state while the link and the panel are up */
-	if (nord4_dsc_readback)
-		aa553_readback(ctx);
 
 	aa553_off(ctx);
 	ctx->prepared = false;
@@ -508,26 +391,8 @@ static int aa553_get_modes(struct drm_panel *panel, struct drm_connector *connec
 static int aa553_enable(struct drm_panel *panel)
 {
 	struct aa553_panel *ctx = to_aa553_panel(panel);
-	struct backlight_device *bl = ctx->panel.backlight;
-	u8 buf[2] = { 0xff, 0xff };
-	int ret, r0a, r51;
 
-	ret = backlight_enable(bl);
-
-	/*
-	 * The DDIC's own state right after the backlight enable.  A DCS read
-	 * is a low-power-mode transfer (aa553_readback()).
-	 */
-	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
-	r0a = mipi_dsi_dcs_read(ctx->dsi, 0x0a, &buf[0], 1);
-	r51 = mipi_dsi_dcs_read(ctx->dsi, 0x51, &buf[1], 1);
-	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
-
-	pr_info("nord4-panel: enable: backlight_enable ret=%d prepared=%d level=%d 0x0a ret=%d val=%02x 0x51 ret=%d val=%02x\n",
-		ret, ctx->prepared, backlight_get_brightness(bl), r0a, buf[0],
-		r51, buf[1]);
-
-	return ret;
+	return backlight_enable(ctx->panel.backlight);
 }
 
 static int aa553_disable(struct drm_panel *panel)

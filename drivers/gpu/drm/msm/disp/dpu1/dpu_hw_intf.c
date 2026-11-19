@@ -7,7 +7,6 @@
 #include "dpu_hwio.h"
 #include "dpu_hw_catalog.h"
 #include "dpu_hw_intf.h"
-#include "msm_nord4_dsc.h"
 #include "dpu_kms.h"
 #include "dpu_trace.h"
 
@@ -593,11 +592,6 @@ static void dpu_hw_intf_program_intf_cmd_cfg(struct dpu_hw_intf *intf,
 {
 	u32 intf_cfg2 = DPU_REG_READ(&intf->hw, INTF_CONFIG2);
 
-	if (nord4_dsc_dump)
-		pr_info("nord4-dsc: intf%d before CONFIG=0x%08x CONFIG2=0x%08x compress=%d widebus=%d\n",
-			intf->idx - INTF_0, DPU_REG_READ(&intf->hw, INTF_CONFIG),
-			intf_cfg2, cmd_mode_cfg->data_compress, cmd_mode_cfg->wide_bus_en);
-
 	if (cmd_mode_cfg->data_compress)
 		intf_cfg2 |= INTF_CFG2_DCE_DATA_COMPRESS;
 
@@ -605,11 +599,6 @@ static void dpu_hw_intf_program_intf_cmd_cfg(struct dpu_hw_intf *intf,
 		intf_cfg2 |= INTF_CFG2_DATABUS_WIDEN;
 
 	DPU_REG_WRITE(&intf->hw, INTF_CONFIG2, intf_cfg2);
-
-	if (nord4_dsc_dump)
-		pr_info("nord4-dsc: intf%d after CONFIG=0x%08x CONFIG2=0x%08x\n",
-			intf->idx - INTF_0, DPU_REG_READ(&intf->hw, INTF_CONFIG),
-			DPU_REG_READ(&intf->hw, INTF_CONFIG2));
 }
 
 /**
