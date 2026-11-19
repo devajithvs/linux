@@ -68,14 +68,18 @@ static void aa553_reset(struct aa553_panel *ctx)
 {
 	/*
 	 * HACK 2026-11-19: the vendor's qcom,mdss-dsi-reset-sequence is
-	 * <1 2>, <0 5>, <1 25> (dsi-panel-AA553-P-7-A0001-dsc-cmd.dtsi:25).
-	 * Same level order, every sleep doubled.
+	 * <1 2>, <0 5>, <1 25> (dsi-panel-AA553-P-7-A0001-dsc-cmd.dtsi:25)
+	 * on an ACTIVE_HIGH gpio: release 2 ms, assert 5 ms, release 25 ms.
+	 * Our DT declares tlmm 79 GPIO_ACTIVE_LOW, so the same physical order
+	 * is 0, 1, 0.  Every sleep doubled; writing the vendor's numeric
+	 * levels here inverted it and held the DDIC in reset (measured:
+	 * on ret=-110, reads -110/-22).
 	 */
-	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
-	usleep_range(4000, 5000);
 	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
-	usleep_range(10000, 11000);
+	usleep_range(4000, 5000);
 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
+	usleep_range(10000, 11000);
+	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
 	usleep_range(50000, 51000);
 }
 
