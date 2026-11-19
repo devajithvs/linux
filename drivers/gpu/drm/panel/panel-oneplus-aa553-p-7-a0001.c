@@ -262,6 +262,36 @@ static int aa553_off(struct aa553_panel *ctx)
 }
 
 /*
+ * Variant: the DDIC's write window, re-sent in high speed after display-on and
+ * read back.  The on table writes 0x2a = 0x04d7 (columns 0..1239) and
+ * 0x2b = 0x0ad3 (rows 0..2771) in low power; the readback at unprepare
+ * returns 0x095f (2399) for 0x2b (F0228 §3), which is what a stream that only
+ * fills part of the frame would look like.  This prints the answer while the
+ * panel is displayed instead of after it is put to sleep.
+ */
+static void aa553_window_probe(struct aa553_panel *ctx)
+{
+	static const u8 expect[4] = { 0x00, 0x0a, 0xd3, 0x00 };
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
+	u8 buf[4] = { 0xff, 0xff, 0xff, 0xff };
+	int ret;
+
+	/* high speed for the writes, as the brightness writes are */
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2a, 0x00, 0x00, 0x04, 0xd7);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2b, 0x00, 0x00, 0x0a, 0xd3);
+	pr_info("nord4-window: 0x2a/0x2b re-sent in HS, accum_err=%d\n",
+		dsi_ctx.accum_err);
+
+	/* a DCS read is a low-power-mode transfer */
+	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+	ret = mipi_dsi_dcs_read(ctx->dsi, 0x2b, buf, sizeof(buf));
+	pr_info("nord4-window: dcs 0x2b ret=%d %*phN expected %*phN %s\n", ret,
+		(int)sizeof(buf), buf, (int)sizeof(expect), expect,
+		memcmp(buf, expect, sizeof(buf)) ? "DIFF" : "MATCH");
+	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+}
+
+/*
  * Rail order and delays are the downstream supply entries
  * (audi-23803-display-cliffs-overlay.dtsi:21-43): vddio, then its 2 ms
  * post-on and vci's 1 ms pre-on, then vci, then 15 ms, then the panel's
@@ -318,6 +348,8 @@ static int aa553_prepare(struct drm_panel *panel)
 	 */
 	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
 	ctx->prepared = true;
+
+	aa553_window_probe(ctx);
 
 	return 0;
 
