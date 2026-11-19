@@ -657,6 +657,20 @@ void dpu_hw_sspp_nord4_dump(struct dpu_hw_sspp *ctx, const char *tag)
 		DPU_REG_READ(&ctx->hw, SSPP_CLK_STATUS));
 }
 
+/* HACK 2026-11-19 (F0253 follow-up): read-only SSPP clock state, for the
+ * ladder of enable steps that opens the block's clock.
+ */
+void dpu_hw_sspp_nord4_clk(struct dpu_hw_sspp *ctx, const char *tag)
+{
+	if (!ctx)
+		return;
+	pr_info("nord4-clk: %s id=%d base=0x%x clk=0x%x clk_status=0x%x src0=0x%x\n",
+		tag, ctx->idx, ctx->cap->base,
+		DPU_REG_READ(&ctx->hw, SSPP_CLK_CTRL),
+		DPU_REG_READ(&ctx->hw, SSPP_CLK_STATUS),
+		DPU_REG_READ(&ctx->hw, SSPP_SRC0_ADDR));
+}
+
 /* HACK 2026-11-19 (F0252 follow-up): does this SSPP accept a write right now?
  * Write a sentinel to SRC0, read it back, restore the old value and read it
  * back again.  A block whose register file is not up reads its reset value and

@@ -7,6 +7,7 @@
 #include <linux/debugfs.h>
 #include <linux/delay.h>
 
+#include "msm_nord4_dsc.h"
 #include "dpu_vbif.h"
 #include "dpu_hw_vbif.h"
 #include "dpu_trace.h"
@@ -178,6 +179,11 @@ void dpu_vbif_set_ot_limit(struct dpu_kms *dpu_kms,
 		trace_dpu_vbif_wait_xin_halt_fail(params->xin_id);
 
 	vbif->ops.set_halt_ctrl(vbif, params->xin_id, false);
+
+	/* HACK 2026-11-19 (F0253 follow-up): the plane's XIN halt cycle. */
+	if (nord4_sspp_dump)
+		pr_info("nord4-vbif: ot xin=%d rd=%d lim=%u wait_ret=%d\n",
+			params->xin_id, params->rd, ot_lim, ret);
 }
 
 /**

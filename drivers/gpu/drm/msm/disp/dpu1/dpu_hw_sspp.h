@@ -342,6 +342,7 @@ void dpu_hw_sspp_nord4_dump(struct dpu_hw_sspp *ctx, const char *tag);
  * that lands and is later lost.
  */
 void dpu_hw_sspp_nord4_probe(struct dpu_hw_sspp *ctx, const char *tag);
+void dpu_hw_sspp_nord4_clk(struct dpu_hw_sspp *ctx, const char *tag);
 
 int _dpu_hw_sspp_init_debugfs(struct dpu_hw_sspp *hw_pipe, struct dpu_kms *kms,
 			      struct dentry *entry);

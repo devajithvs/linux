@@ -1276,6 +1276,7 @@ static void dpu_crtc_enable(struct drm_crtc *crtc,
 
 	old_crtc_state = drm_atomic_get_old_crtc_state(state, crtc);
 
+	dpu_plane_nord4_clk(crtc, "crtc-enable-enter");
 	pm_runtime_get_sync(crtc->dev->dev);
 
 	DRM_DEBUG_KMS("crtc%d\n", crtc->base.id);
@@ -1302,6 +1303,8 @@ static void dpu_crtc_enable(struct drm_crtc *crtc,
 
 	/* Enable/restore vblank irq handling */
 	drm_crtc_vblank_on(crtc);
+
+	dpu_plane_nord4_clk(crtc, "crtc-enable-exit");
 }
 
 static bool dpu_crtc_needs_dirtyfb(struct drm_crtc_state *cstate)

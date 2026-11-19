@@ -1719,9 +1719,91 @@ static void dpu_plane_atomic_update(struct drm_plane *plane,
 					continue;
 				dpu_hw_sspp_nord4_dump(nps->pipe[i].sspp,
 						       "plane-update");
-				dpu_hw_sspp_nord4_probe(nps->pipe[i].sspp,
-							"plane-update");
 			}
+		}
+	}
+}
+
+/* HACK 2026-11-19 (F0250): candidate for the re-enable (nord4_reenable_rearm).
+ * The clean first set and the re-enable write the same registers and set the
+ * same flush bits, so this tests whether the SSPP's shadow write taken at
+ * atomic_update is lost while the interface is stopped: program every visible
+ * plane of the CRTC again at the encoder's enable, before the interface config
+ * and the flush.
+ */
+static void dpu_plane_nord4_program(struct drm_crtc *crtc)
+{
+	struct drm_plane *plane;
+
+	if (!crtc || !crtc->state)
+		return;
+
+	drm_atomic_crtc_for_each_plane(plane, crtc) {
+		struct drm_plane_state *state = plane->state;
+		struct dpu_plane_state *pstate;
+		const struct msm_format *fmt;
+		int i;
+
+		if (!state || !state->fb || !state->visible)
+			continue;
+
+		pstate = to_dpu_plane_state(state);
+		fmt = msm_framebuffer_format(state->fb);
+		dpu_format_populate_addrs(state->fb, &pstate->layout);
+
+		pr_info("nord4-sspp: reprog plane=%d fb=%u\n",
+			plane->base.id, state->fb->base.id);
+
+		for (i = 0; i < PIPES_PER_PLANE; i++) {
+			if (!pstate->pipe[i].sspp ||
+			    !drm_rect_width(&pstate->pipe_cfg[i].src_rect))
+				continue;
+			dpu_plane_sspp_update_pipe(plane, &pstate->pipe[i],
+						   &pstate->pipe_cfg[i], fmt,
+						   drm_mode_vrefresh(&crtc->state->adjusted_mode),
+						   &pstate->layout);
+		}
+	}
+}
+
+void dpu_plane_nord4_rearm(struct drm_crtc *crtc)
+{
+	if (nord4_reenable_rearm)
+		dpu_plane_nord4_program(crtc);
+}
+
+/* HACK 2026-11-19 (F0253 follow-up): candidate for the ordering — program the
+ * planes after every enable and before the CTL flush.
+ */
+void dpu_plane_nord4_reprogram(struct drm_crtc *crtc)
+{
+	if (nord4_program_before_flush)
+		dpu_plane_nord4_program(crtc);
+}
+
+/* HACK 2026-11-19 (F0253 follow-up): read-only SSPP clock state for every
+ * active plane of the CRTC, at a named point of the commit.  No writes.
+ */
+void dpu_plane_nord4_clk(struct drm_crtc *crtc, const char *tag)
+{
+	struct drm_plane *plane;
+
+	if (!nord4_sspp_dump || !crtc || !crtc->state)
+		return;
+
+	drm_atomic_crtc_for_each_plane(plane, crtc) {
+		struct drm_plane_state *state = plane->state;
+		struct dpu_plane_state *pstate;
+		int i;
+
+		if (!state || !state->visible)
+			continue;
+
+		pstate = to_dpu_plane_state(state);
+		for (i = 0; i < PIPES_PER_PLANE; i++) {
+			if (!pstate->pipe[i].sspp)
+				continue;
+			dpu_hw_sspp_nord4_clk(pstate->pipe[i].sspp, tag);
 		}
 	}
 }
@@ -1740,47 +1822,6 @@ void dpu_plane_nord4_dump(struct dpu_kms *kms, const char *tag)
 				       tag);
 }
 
-/* HACK 2026-11-19 (F0250): candidate for the re-enable (nord4_reenable_rearm).
- * The clean first set and the re-enable write the same registers and set the
- * same flush bits, so this tests whether the SSPP's shadow write taken at
- * atomic_update is lost while the interface is stopped: program every visible
- * plane of the CRTC again at the encoder's enable, before the interface config
- * and the flush.
- */
-void dpu_plane_nord4_rearm(struct drm_crtc *crtc)
-{
-	struct drm_plane *plane;
-
-	if (!nord4_reenable_rearm || !crtc || !crtc->state)
-		return;
-
-	drm_atomic_crtc_for_each_plane(plane, crtc) {
-		struct drm_plane_state *state = plane->state;
-		struct dpu_plane_state *pstate;
-		const struct msm_format *fmt;
-		int i;
-
-		if (!state || !state->fb || !state->visible)
-			continue;
-
-		pstate = to_dpu_plane_state(state);
-		fmt = msm_framebuffer_format(state->fb);
-		dpu_format_populate_addrs(state->fb, &pstate->layout);
-
-		pr_info("nord4-sspp: rearm plane=%d fb=%u\n",
-			plane->base.id, state->fb->base.id);
-
-		for (i = 0; i < PIPES_PER_PLANE; i++) {
-			if (!pstate->pipe[i].sspp ||
-			    !drm_rect_width(&pstate->pipe_cfg[i].src_rect))
-				continue;
-			dpu_plane_sspp_update_pipe(plane, &pstate->pipe[i],
-						   &pstate->pipe_cfg[i], fmt,
-						   drm_mode_vrefresh(&crtc->state->adjusted_mode),
-						   &pstate->layout);
-		}
-	}
-}
 
 /* HACK 2026-11-19 (F0252 follow-up): sentinel write/read of SRC0 on every
  * active pipe, plus the SSPP clock state, at a named moment of the commit.

@@ -466,13 +466,17 @@ void dpu_kms_nord4_state(struct dpu_kms *dpu_kms, const char *tag, bool regs)
 		readl_relaxed(dpu_kms->mmio + 0x2F4),
 		readl_relaxed(dpu_kms->mmio + 0x028),
 		readl_relaxed(dpu_kms->mmio + 0x004));
-	pr_info("nord4-pm: %s vbif version=0x%x clk_force0=0x%x clk_force1=0x%x memtype=0x%x,0x%x\n",
+	pr_info("nord4-pm: %s vbif version=0x%x clk_force0=0x%x clk_force1=0x%x memtype=0x%x,0x%x halt=0x%x,0x%x err=0x%x,0x%x\n",
 		tag,
 		readl_relaxed(dpu_kms->vbif + 0x0000),
 		readl_relaxed(dpu_kms->vbif + 0x0008),
 		readl_relaxed(dpu_kms->vbif + 0x000C),
 		readl_relaxed(dpu_kms->vbif + 0x0160),
-		readl_relaxed(dpu_kms->vbif + 0x0164));
+		readl_relaxed(dpu_kms->vbif + 0x0164),
+		readl_relaxed(dpu_kms->vbif + 0x0200),
+		readl_relaxed(dpu_kms->vbif + 0x0204),
+		readl_relaxed(dpu_kms->vbif + 0x0190),
+		readl_relaxed(dpu_kms->vbif + 0x0194));
 }
 EXPORT_SYMBOL_GPL(dpu_kms_nord4_state);
 

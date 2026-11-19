@@ -119,6 +119,25 @@ module_param_named(nord4_sspp_clk_force, nord4_sspp_clk_force, uint, 0644);
 MODULE_PARM_DESC(nord4_sspp_clk_force, "1 = force the SSPP clock on before programming it at the enable (candidate)");
 EXPORT_SYMBOL_GPL(nord4_sspp_clk_force);
 
+/* HACK 2026-11-19 (F0253 follow-up): the plane is programmed in commit_planes,
+ * before commit_modeset_enables opens the SSPP's clock gate (0x330 0 -> 0x4).
+ * Candidate: program the visible planes again in dpu_encoder_prepare_for_kickoff,
+ * i.e. after every enable and before the CTL flush.  0 = the tree's behaviour.
+ */
+uint nord4_program_before_flush;
+module_param_named(nord4_program_before_flush, nord4_program_before_flush, uint, 0644);
+MODULE_PARM_DESC(nord4_program_before_flush, "1 = re-program the visible planes after the enables, before the flush (candidate)");
+EXPORT_SYMBOL_GPL(nord4_program_before_flush);
+
+/* HACK 2026-11-19 (F0253 follow-up): the VBIF AMEMTYPE of DMA0's XIN1 reads 3
+ * at boot and 0 after a runtime cycle.  Candidate: re-run the memtype table
+ * after the enables, before the flush.  0 = the tree's behaviour.
+ */
+uint nord4_vbif_restore;
+module_param_named(nord4_vbif_restore, nord4_vbif_restore, uint, 0644);
+MODULE_PARM_DESC(nord4_vbif_restore, "1 = re-write the VBIF memtypes after the enables, before the flush (candidate)");
+EXPORT_SYMBOL_GPL(nord4_vbif_restore);
+
 /* HACK 2026-11-19: candidate for the disable->enable IOVA-0 fault (F0214,
  * F0246): reset the CTL's cached flush state at the command encoder's enable,
  * before the pingpong/intf are reconfigured.  0 = the tree's behaviour.
