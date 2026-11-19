@@ -78,9 +78,13 @@ static void aa553_reset(struct aa553_panel *ctx)
 	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
 	usleep_range(4000, 5000);
 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
-	usleep_range(10000, 11000);
+	/* W1: the reset's assert hold (vendor 5000 us), live-tunable */
+	usleep_range(nord4_aa553_w1_reset_hold_us,
+		     nord4_aa553_w1_reset_hold_us + 1000);
 	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
-	usleep_range(50000, 51000);
+	/* W2: the post-reset settle (vendor 25000 us), live-tunable */
+	usleep_range(nord4_aa553_w2_reset_settle_us,
+		     nord4_aa553_w2_reset_settle_us + 1000);
 }
 
 /*
@@ -102,8 +106,8 @@ static void aa553_send_pps(struct aa553_panel *ctx,
 	drm_dsc_pps_payload_pack(&pps, &ctx->dsc);
 	mipi_dsi_picture_parameter_set_multi(dsi_ctx, &pps);
 
-	/* vendor PPS-to-display-on 28 ms, doubled */
-	mipi_dsi_msleep(dsi_ctx, 56);
+	/* W3: the wait after the on table's PPS (vendor 28 ms), live-tunable */
+	mipi_dsi_msleep(dsi_ctx, nord4_aa553_w3_pps_ms);
 }
 
 /*
@@ -285,8 +289,8 @@ static int aa553_on(struct aa553_panel *ctx)
 	if (nord4_dsc_pps_when == 1)
 		aa553_send_pps(ctx, &dsi_ctx);
 	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
-	/* vendor 0x78 = 120 ms after sleep-out, doubled */
-	mipi_dsi_msleep(&dsi_ctx, 240);
+	/* W4: sleep-out to display-on (vendor 120 ms), live-tunable */
+	mipi_dsi_msleep(&dsi_ctx, nord4_aa553_w4_sleepout_ms);
 	if (nord4_dsc_pps_when == 2)
 		aa553_send_pps(ctx, &dsi_ctx);
 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);

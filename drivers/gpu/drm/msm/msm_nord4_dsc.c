@@ -62,3 +62,27 @@ uint nord4_dsc_dump;
 module_param_named(nord4_dsc_dump, nord4_dsc_dump, uint, 0644);
 MODULE_PARM_DESC(nord4_dsc_dump, "1 = dump the DSI/DPU/DSC registers at every mode set");
 EXPORT_SYMBOL_GPL(nord4_dsc_dump);
+
+/* HACK 2026-11-19: the four waits the owner's live bisection sweeps, in the
+ * units the panel driver uses.  Defaults are the doubled values that lit 6/6
+ * with the forced power-off (F0239) and 3/3 without it (F0240/B).
+ */
+uint nord4_aa553_w1_reset_hold_us = 10000;
+module_param_named(nord4_aa553_w1_reset_hold_us, nord4_aa553_w1_reset_hold_us, uint, 0644);
+MODULE_PARM_DESC(nord4_aa553_w1_reset_hold_us, "reset assert hold, us (vendor 5000)");
+EXPORT_SYMBOL_GPL(nord4_aa553_w1_reset_hold_us);
+
+uint nord4_aa553_w2_reset_settle_us = 50000;
+module_param_named(nord4_aa553_w2_reset_settle_us, nord4_aa553_w2_reset_settle_us, uint, 0644);
+MODULE_PARM_DESC(nord4_aa553_w2_reset_settle_us, "post-reset settle, us (vendor 25000)");
+EXPORT_SYMBOL_GPL(nord4_aa553_w2_reset_settle_us);
+
+uint nord4_aa553_w3_pps_ms = 56;
+module_param_named(nord4_aa553_w3_pps_ms, nord4_aa553_w3_pps_ms, uint, 0644);
+MODULE_PARM_DESC(nord4_aa553_w3_pps_ms, "wait after the on table's PPS, ms (vendor 28)");
+EXPORT_SYMBOL_GPL(nord4_aa553_w3_pps_ms);
+
+uint nord4_aa553_w4_sleepout_ms = 240;
+module_param_named(nord4_aa553_w4_sleepout_ms, nord4_aa553_w4_sleepout_ms, uint, 0644);
+MODULE_PARM_DESC(nord4_aa553_w4_sleepout_ms, "wait between sleep-out and display-on, ms (vendor 120)");
+EXPORT_SYMBOL_GPL(nord4_aa553_w4_sleepout_ms);
