@@ -76,11 +76,11 @@ static void aa553_reset(struct aa553_panel *ctx)
 	 * on ret=-110, reads -110/-22).
 	 */
 	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
-	usleep_range(4000, 5000);
+	usleep_range(2000, 3000);
 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
-	usleep_range(10000, 11000);
+	usleep_range(5000, 6000);
 	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
-	usleep_range(50000, 51000);
+	usleep_range(25000, 26000);
 }
 
 /*
@@ -285,8 +285,7 @@ static int aa553_on(struct aa553_panel *ctx)
 	if (nord4_dsc_pps_when == 1)
 		aa553_send_pps(ctx, &dsi_ctx);
 	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
-	/* vendor 0x78 = 120 ms after sleep-out, doubled */
-	mipi_dsi_msleep(&dsi_ctx, 240);
+	mipi_dsi_msleep(&dsi_ctx, 120);
 	if (nord4_dsc_pps_when == 2)
 		aa553_send_pps(ctx, &dsi_ctx);
 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
@@ -335,16 +334,14 @@ static int aa553_prepare(struct drm_panel *panel)
 		return ret;
 	}
 
-	/* vendor 2 ms post-on, doubled */
-	usleep_range(4000, 5000);
+	usleep_range(2000, 3000);
 
 	/*
 	 * The vci entry also asks for a 1 ms pre-on sleep
 	 * (audi-23803-display-cliffs-overlay.dtsi:39), so the rail comes up
 	 * 3 ms after vddio, not 2 ms.
 	 */
-	/* vendor 1 ms pre-on, doubled */
-	usleep_range(2000, 3000);
+	usleep_range(1000, 2000);
 
 	ret = regulator_enable(ctx->supplies[1].consumer);
 	if (ret < 0) {
@@ -352,12 +349,10 @@ static int aa553_prepare(struct drm_panel *panel)
 		goto err_disable_vddio;
 	}
 
-	/* vendor 15 ms after vci, doubled */
-	usleep_range(30000, 31000);
+	usleep_range(15000, 16000);
 
 	aa553_reset(ctx);
-	/* vendor init-delay-us 1000, doubled */
-	usleep_range(2000, 3000);
+	usleep_range(1000, 2000);
 
 	ret = aa553_on(ctx);
 	pr_info("nord4-panel: prepare: on ret=%d accum=%d\n", ret, dsi_ctx.accum_err);
