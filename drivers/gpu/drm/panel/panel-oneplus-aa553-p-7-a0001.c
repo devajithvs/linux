@@ -27,6 +27,7 @@
  */
 extern uint nord4_dsc_pps_when;
 extern uint nord4_dsc_readback;
+extern uint nord4_dsc_dump;
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_modes.h>
 #include <drm/drm_panel.h>
@@ -91,6 +92,19 @@ static void aa553_send_pps(struct aa553_panel *ctx,
 	struct drm_dsc_picture_parameter_set pps;
 
 	drm_dsc_pps_payload_pack(&pps, &ctx->dsc);
+
+	if (nord4_dsc_dump) {
+		pr_info("nord4-panel: pps cfg ver=%u.%u bpc=%u bpp=0x%x pic=%ux%u slice=%ux%u chunk=%u init_off=%u final_off=%u\n",
+			ctx->dsc.dsc_version_major, ctx->dsc.dsc_version_minor,
+			ctx->dsc.bits_per_component, ctx->dsc.bits_per_pixel,
+			ctx->dsc.pic_width, ctx->dsc.pic_height,
+			ctx->dsc.slice_width, ctx->dsc.slice_height,
+			ctx->dsc.slice_chunk_size, ctx->dsc.initial_offset,
+			ctx->dsc.final_offset);
+		pr_info("nord4-panel: pps bytes %*ph\n", (int)sizeof(pps),
+			(const void *)&pps);
+	}
+
 	mipi_dsi_picture_parameter_set_multi(dsi_ctx, &pps);
 
 	mipi_dsi_msleep(dsi_ctx, 28);

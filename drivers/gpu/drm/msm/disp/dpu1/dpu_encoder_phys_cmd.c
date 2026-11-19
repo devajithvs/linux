@@ -7,6 +7,7 @@
 #include <linux/delay.h>
 #include <linux/string_choices.h>
 #include "dpu_encoder_phys.h"
+#include "msm_nord4_dsc.h"
 #include "dpu_hw_interrupts.h"
 #include "dpu_hw_pingpong.h"
 #include "dpu_core_irq.h"
@@ -15,6 +16,10 @@
 #include "disp/msm_disp_snapshot.h"
 
 #include <drm/drm_managed.h>
+
+static atomic_t nord4_kickoff_cnt = ATOMIC_INIT(0);
+static atomic_t nord4_ppdone_cnt = ATOMIC_INIT(0);
+static atomic_t nord4_te_cnt = ATOMIC_INIT(0);
 
 #define DPU_DEBUG_CMDENC(e, fmt, ...) DPU_DEBUG("enc%d intf%d " fmt, \
 		(e) && (e)->base.parent ? \
@@ -66,6 +71,11 @@ static void _dpu_encoder_phys_cmd_update_intf_cfg(
 	intf_cfg.stream_sel = cmd_enc->stream_sel;
 	intf_cfg.mode_3d = dpu_encoder_helper_get_3d_blend_mode(phys_enc);
 	intf_cfg.dsc = dpu_encoder_helper_get_dsc(phys_enc);
+	if (nord4_dsc_dump)
+		pr_info("nord4-dsc: intf=%d dsc=%d master=%d stream_sel=%u widebus=%d\n",
+			intf_cfg.intf - INTF_0, intf_cfg.dsc,
+			intf_cfg.intf_master - INTF_0, intf_cfg.stream_sel,
+			dpu_encoder_is_widebus_enabled(phys_enc->parent));
 	ctl->ops.setup_intf_cfg(ctl, &intf_cfg);
 
 	/* setup which pp blk will connect to this intf */
@@ -95,6 +105,13 @@ static void dpu_encoder_phys_cmd_pp_tx_done_irq(void *arg)
 		return;
 
 	DPU_ATRACE_BEGIN("pp_done_irq");
+	{
+		int n = atomic_inc_return(&nord4_ppdone_cnt);
+
+		if (nord4_dsc_dump && (n < 9 || !(n % 300)))
+			pr_info("nord4-dsc: pp-done n=%d pp=%d\n", n,
+				phys_enc->hw_pp->idx - PINGPONG_0);
+	}
 	/* notify all synchronous clients first, then asynchronous clients */
 	dpu_encoder_frame_done_callback(phys_enc->parent, phys_enc, event);
 
@@ -118,6 +135,12 @@ static void dpu_encoder_phys_cmd_te_rd_ptr_irq(void *arg)
 
 	DPU_ATRACE_BEGIN("rd_ptr_irq");
 	cmd_enc = to_dpu_encoder_phys_cmd(phys_enc);
+	{
+		int n = atomic_inc_return(&nord4_te_cnt);
+
+		if (nord4_dsc_dump && (n < 5 || !(n % 300)))
+			pr_info("nord4-dsc: te n=%d\n", n);
+	}
 
 	dpu_encoder_vblank_callback(phys_enc->parent, phys_enc);
 
@@ -707,6 +730,11 @@ static void dpu_encoder_phys_cmd_handle_post_kickoff(
 static void dpu_encoder_phys_cmd_trigger_start(
 		struct dpu_encoder_phys *phys_enc)
 {
+	int n = atomic_inc_return(&nord4_kickoff_cnt);
+
+	if (nord4_dsc_dump && (n < 9 || !(n % 300)))
+		pr_info("nord4-dsc: kickoff n=%d pending=%d\n", n,
+			atomic_read(&phys_enc->pending_kickoff_cnt));
 	dpu_encoder_helper_trigger_start(phys_enc);
 }
 

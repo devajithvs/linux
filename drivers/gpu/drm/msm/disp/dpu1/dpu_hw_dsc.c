@@ -12,6 +12,7 @@
 #include "dpu_hwio.h"
 #include "dpu_hw_mdss.h"
 #include "dpu_hw_dsc.h"
+#include "msm_nord4_dsc.h"
 
 #define DSC_COMMON_MODE                 0x000
 #define DSC_ENC                         0x004
@@ -53,6 +54,14 @@ static void dpu_hw_dsc_config(struct dpu_hw_dsc *hw_dsc,
 	u32 det_thresh_flatness;
 	bool is_cmd_mode = !(mode & DSC_MODE_VIDEO);
 	bool input_10_bits = dsc->bits_per_component == 10;
+
+	if (nord4_dsc_dump)
+		pr_info("nord4-dsc: dpu idx=%d mode=0x%x init_lines=%u pic=%ux%u slice=%ux%u chunk=%u bpp=0x%x bpc=%u init_off=%u final_off=%u\n",
+			hw_dsc->idx - DSC_0, mode, initial_lines, dsc->pic_width,
+			dsc->pic_height, dsc->slice_width, dsc->slice_height,
+			dsc->slice_chunk_size, dsc->bits_per_pixel,
+			dsc->bits_per_component, dsc->initial_offset,
+			dsc->final_offset);
 
 	DPU_REG_WRITE(c, DSC_COMMON_MODE, mode);
 

@@ -957,6 +957,13 @@ static void dsi_update_dsc_timing(struct msm_dsi_host *msm_host, bool is_cmd_mod
 	else if (nord4_dsc_stream == 4)
 		pkt_per_line = 1;
 
+	if (nord4_dsc_dump)
+		pr_info("nord4-dsc: dsi cmd=%d slice_count=%u slice_per_pkt=%u bytes_per_pkt=%u eol=%u pkt_per_line=%u chunk=%u bpp=0x%x pic=%ux%u slice=%ux%u\n",
+			is_cmd_mode, slice_per_intf, slice_per_pkt, bytes_per_pkt,
+			eol_byte_num, pkt_per_line, dsc->slice_chunk_size,
+			dsc->bits_per_pixel, dsc->pic_width, dsc->pic_height,
+			dsc->slice_width, dsc->slice_height);
+
 	if (is_cmd_mode) /* packet data type */
 		reg = DSI_COMMAND_COMPRESSION_MODE_CTRL_STREAM0_DATATYPE(MIPI_DSI_DCS_LONG_WRITE);
 	else
