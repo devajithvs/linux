@@ -329,17 +329,6 @@ static int aa553_prepare(struct drm_panel *panel)
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 	int ret;
 
-	/*
-	 * HACK 2026-11-19: the bootloader leaves both rails on and the panel
-	 * running, so a plain regulator_enable() is a no-op and the DDIC never
-	 * sees a real power cycle.  Force the vendor's power-off first: reset
-	 * asserted, vci off, vddio off, 200 ms.
-	 */
-	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
-	regulator_force_disable(ctx->supplies[1].consumer);
-	regulator_force_disable(ctx->supplies[0].consumer);
-	usleep_range(200000, 210000);
-
 	ret = regulator_enable(ctx->supplies[0].consumer);
 	if (ret < 0) {
 		pr_err("nord4-panel: prepare: vddio enable ret=%d\n", ret);
