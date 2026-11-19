@@ -25,6 +25,7 @@
 
 #include "dsi.h"
 #include "dsi.xml.h"
+#include "../msm_nord4_tune.h"
 #include "sfpb.xml.h"
 #include "dsi_cfg.h"
 #include "msm_dsc_helper.h"
@@ -798,6 +799,9 @@ bool msm_dsi_host_is_wide_bus_enabled(struct mipi_dsi_host *host)
 {
 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
 
+	if (nord4_widebus)
+		return nord4_widebus == 1;
+
 	return msm_host->dsc &&
 		msm_dsi_host_version_geq(msm_host, MSM_DSI_VER_MAJOR_6G,
 					MSM_DSI_6G_VER_MINOR_V2_5_0);
@@ -943,7 +947,8 @@ static void dsi_update_dsc_timing(struct msm_dsi_host *msm_host, bool is_cmd_mod
 	total_bytes_per_intf = dsc->slice_chunk_size * slice_per_intf;
 	bytes_per_pkt = dsc->slice_chunk_size * slice_per_pkt;
 
-	eol_byte_num = total_bytes_per_intf % 3;
+	eol_byte_num = nord4_eol == 0xff ? total_bytes_per_intf % 3 :
+		nord4_eol & 3;
 
 	pkt_per_line = slice_per_intf / slice_per_pkt;
 
@@ -1066,6 +1071,10 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 		}
 
 		hdisplay = DIV_ROUND_UP(msm_dsc_get_bytes_per_line(msm_host->dsc) * 8, bits_per_pclk);
+		if (nord4_h_total_adj > 0)
+			hdisplay += nord4_h_total_adj;
+		else if (nord4_h_total_adj < 0 && hdisplay > (u32)-nord4_h_total_adj)
+			hdisplay += nord4_h_total_adj;
 
 		h_total += hdisplay;
 		ha_end = ha_start + hdisplay;
@@ -1102,7 +1111,7 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 		else
 			/* When DSC is enabled, WC = slice_chunk_size * slice_per_pkt + 1 */
 			wc = msm_host->dsc->slice_chunk_size *
-				msm_host->dsc_slice_per_pkt + 1;
+				(nord4_slice_per_pkt ?: msm_host->dsc_slice_per_pkt) + 1;
 
 		dsi_write(msm_host, REG_DSI_CMD_MDP_STREAM0_CTRL,
 			DSI_CMD_MDP_STREAM0_CTRL_WORD_COUNT(wc) |

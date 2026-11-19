@@ -27,6 +27,7 @@
 #include "dpu_crtc.h"
 #include "dpu_vbif.h"
 #include "dpu_plane.h"
+#include "msm_nord4_tune.h"
 
 #define DPU_DEBUG_PLANE(pl, fmt, ...) DRM_DEBUG_ATOMIC("plane%d " fmt,\
 		(pl) ? (pl)->base.base.id : -1, ##__VA_ARGS__)
@@ -981,6 +982,23 @@ static int dpu_plane_split(struct drm_plane *plane,
 					    new_plane_state->fb->width,
 					    new_plane_state->fb->height,
 					    new_plane_state->rotation);
+
+		/*
+		 * F0261 follow-up: the line-start knobs.  A source crop moves
+		 * the content left by the same number of pixels (the dst
+		 * width shrinks with it, so there is no scaling); the dst
+		 * offset moves it right for the opposite test.
+		 */
+		if (nord4_plane_src_x &&
+		    drm_rect_width(&pipe_cfg->src_rect) > (int)nord4_plane_src_x) {
+			pipe_cfg->src_rect.x1 += nord4_plane_src_x;
+			if (drm_rect_width(&pipe_cfg->dst_rect) > (int)nord4_plane_src_x)
+				pipe_cfg->dst_rect.x2 -= nord4_plane_src_x;
+		}
+		if (nord4_plane_dst_x) {
+			pipe_cfg->dst_rect.x1 += nord4_plane_dst_x;
+			pipe_cfg->dst_rect.x2 += nord4_plane_dst_x;
+		}
 	}
 
 	return 0;

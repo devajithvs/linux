@@ -29,6 +29,7 @@
 #include "dpu_hw_dspp.h"
 #include "dpu_crtc.h"
 #include "dpu_plane.h"
+#include "msm_nord4_tune.h"
 #include "dpu_encoder.h"
 #include "dpu_vbif.h"
 #include "dpu_core_perf.h"
@@ -385,7 +386,7 @@ static void _dpu_crtc_program_lm_output_roi(struct drm_crtc *crtc)
 		if (!lm_roi || !drm_rect_visible(lm_roi))
 			continue;
 
-		cfg.out_width = drm_rect_width(lm_roi);
+		cfg.out_width = drm_rect_width(lm_roi) + nord4_lm_out_pad;
 		cfg.out_height = drm_rect_height(lm_roi);
 		cfg.right_mixer = lm_idx & 0x1;
 		cfg.flags = 0;

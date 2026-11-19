@@ -27,6 +27,8 @@
 
 #include <video/mipi_display.h>
 
+#include "../msm/msm_nord4_tune.h"
+
 struct aa553_panel {
 	struct drm_panel panel;
 	struct mipi_dsi_device *dsi;
@@ -125,8 +127,16 @@ static int aa553_on(struct aa553_panel *ctx)
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x26, 0x00);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x26, 0x00);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x17, 0x10);
-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2a, 0x00, 0x00, 0x04, 0xd7);
-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2b, 0x00, 0x00, 0x0a, 0xd3);
+	/* F0260 follow-up: the window is live-tunable (defaults 0..1239, 0..2771) */
+	{
+		u8 col[4] = { nord4_win_2a_start >> 8, nord4_win_2a_start,
+			      nord4_win_2a_end >> 8, nord4_win_2a_end };
+		u8 page[4] = { nord4_win_2b_start >> 8, nord4_win_2b_start,
+			       nord4_win_2b_end >> 8, nord4_win_2b_end };
+
+		mipi_dsi_dcs_write(dsi_ctx.dsi, 0x2a, col, sizeof(col));
+		mipi_dsi_dcs_write(dsi_ctx.dsi, 0x2b, page, sizeof(page));
+	}
 	/* 120 Hz; 0x01 = 120, 0x02 = 90, 0x03 = 60 */
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2f, 0x01);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x35, 0x00);
@@ -273,6 +283,16 @@ static int aa553_prepare(struct drm_panel *panel)
 	struct aa553_panel *ctx = to_aa553_panel(panel);
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 	int ret;
+
+	/* F0260 follow-up: the DSC/PPS values are live-tunable, defaults today's */
+	ctx->dsc.pic_width = nord4_pic_width;
+	ctx->dsc.pic_height = nord4_pic_height;
+	ctx->dsc.slice_width = nord4_slice_width;
+	ctx->dsc.slice_height = nord4_slice_height;
+	ctx->dsc.slice_chunk_size = nord4_slice_chunk;
+	ctx->dsc.slice_count = nord4_slice_width ?
+		ctx->dsc.pic_width / nord4_slice_width : 0;
+	ctx->dsc.dsc_slice_per_pkt = nord4_slice_per_pkt;
 
 	/*
 	 * Root cause (F0239, F0244): a first mode set after a warm boot lit
