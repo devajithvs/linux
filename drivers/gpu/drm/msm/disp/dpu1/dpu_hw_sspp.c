@@ -628,6 +628,30 @@ static bool dpu_hw_sspp_setup_clk_force_ctrl(struct dpu_hw_sspp *ctx, bool enabl
 	return dpu_hw_clk_force_ctrl(&ctx->hw, &sspp_clk_ctrl, enable);
 }
 
+/* HACK 2026-11-19 (F0250): the re-enable's IOVA-0 fault does not name the
+ * block that fetched; read this SSPP's source programming back so the clean
+ * first set and the re-enable can be compared register by register.  SRC1..3
+ * are 0 for a single-plane linear format, which is why an unintended fetch of
+ * "plane 1" would read exactly IOVA 0.
+ */
+void dpu_hw_sspp_nord4_dump(struct dpu_hw_sspp *ctx, const char *tag)
+{
+	pr_info("nord4-sspp: %s id=%d base=0x%x src=0x%x,0x%x,0x%x,0x%x ystride=0x%x,0x%x fmt=0x%x op=0x%x fetch=0x%x ubwc=0x%x sw=0x%x multirect=0x%x\n",
+		tag, ctx->idx, ctx->cap->base,
+		DPU_REG_READ(&ctx->hw, SSPP_SRC0_ADDR),
+		DPU_REG_READ(&ctx->hw, SSPP_SRC1_ADDR),
+		DPU_REG_READ(&ctx->hw, SSPP_SRC2_ADDR),
+		DPU_REG_READ(&ctx->hw, SSPP_SRC3_ADDR),
+		DPU_REG_READ(&ctx->hw, SSPP_SRC_YSTRIDE0),
+		DPU_REG_READ(&ctx->hw, SSPP_SRC_YSTRIDE1),
+		DPU_REG_READ(&ctx->hw, SSPP_SRC_FORMAT),
+		DPU_REG_READ(&ctx->hw, SSPP_SRC_OP_MODE),
+		DPU_REG_READ(&ctx->hw, SSPP_FETCH_CONFIG),
+		DPU_REG_READ(&ctx->hw, SSPP_UBWC_STATIC_CTRL),
+		DPU_REG_READ(&ctx->hw, SSPP_SRC_ADDR_SW_STATUS),
+		DPU_REG_READ(&ctx->hw, SSPP_MULTIRECT_OPMODE));
+}
+
 static void _setup_layer_ops(struct dpu_hw_sspp *c,
 		unsigned long features, const struct dpu_mdss_version *mdss_rev)
 {

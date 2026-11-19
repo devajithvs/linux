@@ -476,12 +476,49 @@ static irqreturn_t arm_smmu_context_fault(int irq, void *dev)
 	/* HACK 2026-11-19 (Entry 9): the display re-enable faults at IOVA 0; show
 	 * the context bank's own programming at the fault, not just the address.
 	 */
-	if (__ratelimit(&rs))
-		pr_info("nord4-smmu: cb=%d cbar=0x%x cba2r=0x%x sctlr=0x%x fsr=0x%x iova=0x%llx fsynr=0x%x\n",
-			idx, arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBAR(idx)),
-			arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBA2R(idx)),
-			arm_smmu_cb_read(smmu, idx, ARM_SMMU_CB_SCTLR),
-			cfi.fsr, cfi.iova, cfi.fsynr);
+	if (__ratelimit(&rs)) {
+		u32 cbndx = smmu_domain->cfg.cbndx;
+		int i, printed = 0;
+
+		dev_info(smmu->dev,
+			 "nord4-smmu: cb=%d cbar=0x%x cba2r=0x%x sctlr=0x%x fsr=0x%x iova=0x%lx fsynr=0x%x\n",
+			 idx, arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBAR(idx)),
+			 arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBA2R(idx)),
+			 arm_smmu_cb_read(smmu, idx, ARM_SMMU_CB_SCTLR),
+			 cfi.fsr, cfi.iova, cfi.fsynr);
+		/* The domain's own cfg beside the bank's TTBR/TCR: F0250 read
+		 * CBA2R/CBAR as if they carried the table base; they do not.
+		 */
+		dev_info(smmu->dev,
+			 "nord4-smmu: cfg cbndx=%u asid=0x%x cbar=%d stage=%d | hw ttbr0=0x%llx tcr=0x%x sctlr=0x%x | sw ttbr0=0x%llx tcr=0x%x\n",
+			 cbndx, smmu_domain->cfg.asid, smmu_domain->cfg.cbar,
+			 smmu_domain->stage,
+			 arm_smmu_cb_readq(smmu, idx, ARM_SMMU_CB_TTBR0),
+			 arm_smmu_cb_read(smmu, idx, ARM_SMMU_CB_TCR),
+			 arm_smmu_cb_read(smmu, idx, ARM_SMMU_CB_SCTLR),
+			 smmu->cbs[idx].ttbr[0], smmu->cbs[idx].tcr[0]);
+
+		/* Which stream map entries point at this context bank. */
+		for (i = 0; i < smmu->num_mapping_groups && printed < 6; i++) {
+			u32 smr = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(i));
+			u32 s2cr = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(i));
+
+			if (!(smr & ARM_SMMU_SMR_VALID))
+				continue;
+			if (FIELD_GET(ARM_SMMU_S2CR_CBNDX, s2cr) != idx ||
+			    FIELD_GET(ARM_SMMU_S2CR_TYPE, s2cr) != S2CR_TYPE_TRANS)
+				continue;
+
+			dev_info(smmu->dev,
+				 "nord4-smmu: sme[%d] smr=0x%x s2cr=0x%x (id=0x%x mask=0x%x type=%lu cbndx=%lu)\n",
+				 i, smr, s2cr,
+				 (unsigned int)FIELD_GET(ARM_SMMU_SMR_ID, smr),
+				 (unsigned int)FIELD_GET(ARM_SMMU_SMR_MASK, smr),
+				 FIELD_GET(ARM_SMMU_S2CR_TYPE, s2cr),
+				 FIELD_GET(ARM_SMMU_S2CR_CBNDX, s2cr));
+			printed++;
+		}
+	}
 
 	arm_smmu_cb_write(smmu, idx, ARM_SMMU_CB_FSR, cfi.fsr);
 
@@ -1218,6 +1255,28 @@ static int arm_smmu_attach_dev(struct iommu_domain *domain, struct device *dev,
 	/* Looks ok, so add the device to the domain */
 	arm_smmu_master_install_s2crs(cfg, S2CR_TYPE_TRANS,
 				      smmu_domain->cfg.cbndx, fwspec);
+
+	/*
+	 * HACK 2026-11-19 (F0250): the display's stream id is 0x1c00; record
+	 * the domain and the stream map entry the DPU is attached with, so the
+	 * fault's readback can be compared with what the driver programmed.
+	 */
+	{
+		int i, idx;
+
+		for_each_cfg_sme(cfg, fwspec, i, idx) {
+			if (FIELD_GET(ARM_SMMU_SMR_ID, fwspec->ids[i]) != 0x1c00)
+				continue;
+			dev_info(smmu->dev,
+				 "nord4-smmu: attach %s cbndx=%u asid=0x%x stage=%d ttbr0=0x%llx sme[%d] smr=0x%x s2cr=0x%x\n",
+				 dev_name(dev), smmu_domain->cfg.cbndx,
+				 smmu_domain->cfg.asid, smmu_domain->stage,
+				 smmu->cbs[smmu_domain->cfg.cbndx].ttbr[0],
+				 idx,
+				 arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_SMR(idx)),
+				 arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(idx)));
+		}
+	}
 rpm_put:
 	arm_smmu_rpm_put(smmu);
 	return ret;

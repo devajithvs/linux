@@ -785,6 +785,24 @@ static void dpu_hw_ctl_set_active_lms(struct dpu_hw_ctl *ctx,
 	DPU_REG_WRITE(&ctx->hw, CTL_LAYER_ACTIVE, val);
 }
 
+/* HACK 2026-11-19 (F0250): the CTL's hardware view at the flush, after
+ * trigger_flush has written CTL_FLUSH.  A fetch pipe bit with no corresponding
+ * programmed SSPP is the "second pipe" the re-enable hypothesis needs.
+ */
+void dpu_hw_ctl_nord4_dump(struct dpu_hw_ctl *ctx, const char *tag)
+{
+	pr_info("nord4-ctl: %s idx=%d pending=0x%x top=0x%x intf_active=0x%x dsc_active=0x%x fetch=0x%x pipe_active=0x%x layer_active=0x%x layer0=0x%x layer1=0x%x\n",
+		tag, ctx->idx, ctx->pending_flush_mask,
+		DPU_REG_READ(&ctx->hw, CTL_TOP),
+		DPU_REG_READ(&ctx->hw, CTL_INTF_ACTIVE),
+		DPU_REG_READ(&ctx->hw, CTL_DSC_ACTIVE),
+		DPU_REG_READ(&ctx->hw, CTL_FETCH_PIPE_ACTIVE),
+		DPU_REG_READ(&ctx->hw, CTL_PIPE_ACTIVE),
+		DPU_REG_READ(&ctx->hw, CTL_LAYER_ACTIVE),
+		DPU_REG_READ(&ctx->hw, CTL_LAYER(LM_0)),
+		DPU_REG_READ(&ctx->hw, CTL_LAYER(LM_1)));
+}
+
 /**
  * dpu_hw_ctl_init() - Initializes the ctl_path hw driver object.
  * Should be called before accessing any ctl_path register.

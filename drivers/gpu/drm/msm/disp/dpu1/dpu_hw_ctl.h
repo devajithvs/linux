@@ -358,4 +358,10 @@ struct dpu_hw_ctl *dpu_hw_ctl_init(struct drm_device *dev,
 				   u32 mixer_count,
 				   const struct dpu_lm_cfg *mixer);
 
+/* HACK 2026-11-19 (F0250): the CTL's hardware view of the topology — which
+ * interfaces, DSC blocks, fetch pipes, pipes and layers it believes are
+ * active — read back at the flush.  Quiet unless nord4_sspp_dump is set.
+ */
+void dpu_hw_ctl_nord4_dump(struct dpu_hw_ctl *ctx, const char *tag);
+
 #endif /*_DPU_HW_CTL_H */

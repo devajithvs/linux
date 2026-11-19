@@ -8,6 +8,7 @@
 #include <linux/string_choices.h>
 #include "dpu_encoder_phys.h"
 #include "msm_nord4_dsc.h"
+#include "dpu_plane.h"
 #include "dpu_hw_interrupts.h"
 #include "dpu_hw_pingpong.h"
 #include "dpu_core_irq.h"
@@ -462,6 +463,15 @@ static void dpu_encoder_phys_cmd_enable_helper(
 		DPU_ERROR("invalid arg(s), encoder %d\n", phys_enc != NULL);
 		return;
 	}
+
+	/*
+	 * HACK 2026-11-19 (F0250): candidate for the re-enable's IOVA-0 fault.
+	 * Re-program the CRTC's visible planes here, while the interface is
+	 * still stopped and before the interface config arms the flush, so the
+	 * SSPP address the flush latches is written in this commit.
+	 */
+	if (nord4_reenable_rearm && phys_enc->parent->crtc)
+		dpu_plane_nord4_rearm(phys_enc->parent->crtc);
 
 	dpu_encoder_helper_split_config(phys_enc, phys_enc->hw_intf->idx);
 

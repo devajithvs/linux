@@ -38,6 +38,14 @@ extern uint nord4_dsc_merge;
 extern uint nord4_dsc_readback;
 /* 0 = quiet, 1 = dump the DSI/DPU/DSC registers at every mode set */
 extern uint nord4_dsc_dump;
+/* 0 = quiet, 1 = dump the plane's pipes, every SSPP's SRC0-3 read back and
+ * the CTL's active registers at every plane update and every CTL flush
+ */
+extern uint nord4_sspp_dump;
+/* 0 = the tree's behaviour, 1 = re-program every visible plane of the CRTC at
+ * the command encoder's enable (re-enable fix candidate)
+ */
+extern uint nord4_reenable_rearm;
 extern uint nord4_ctl_reset_on_enable;
 extern uint nord4_aa553_w1_reset_hold_us;
 extern uint nord4_aa553_w2_reset_settle_us;

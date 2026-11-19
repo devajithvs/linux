@@ -33,6 +33,7 @@
 #include "dpu_formats.h"
 #include "dpu_encoder_phys.h"
 #include "dpu_crtc.h"
+#include "dpu_plane.h"
 #include "dpu_trace.h"
 #include "dpu_core_irq.h"
 #include "disp/msm_disp_snapshot.h"
@@ -1272,6 +1273,48 @@ static void dpu_encoder_virt_atomic_mode_set(struct drm_encoder *drm_enc,
 		if (phys->ops.atomic_mode_set)
 			phys->ops.atomic_mode_set(phys, crtc_state, conn_state);
 	}
+
+	/*
+	 * HACK 2026-11-19 (F0250): the mode's own pipeline — how many physical
+	 * encoders, pingpongs, CTLs, DSC blocks and layer mixers the resource
+	 * manager assigned — so the re-enable's registers can be read against
+	 * the topology they belong to.
+	 */
+	if (nord4_sspp_dump) {
+		struct dpu_hw_blk *hw_lm[MAX_CHANNELS_PER_ENC];
+		struct dpu_crtc_state *cstate = to_dpu_crtc_state(crtc_state);
+		int num_lm;
+
+		num_lm = dpu_rm_get_assigned_resources(&dpu_kms->rm,
+				global_state, drm_enc->crtc, DPU_HW_BLK_LM,
+				hw_lm, ARRAY_SIZE(hw_lm));
+
+		pr_info("nord4-topo: enc=%d phys=%d pp=%d ctl=%d dsc=%d dsc_mask=0x%x lm=%d mixers=%d\n",
+			drm_enc->base.id, dpu_enc->num_phys_encs, num_pp,
+			num_ctl, num_dsc, dsc_mask, num_lm, cstate->num_mixers);
+
+		for (i = 0; i < num_lm; i++)
+			pr_info("nord4-topo: lm[%d] id=%d\n", i,
+				to_dpu_hw_mixer(hw_lm[i])->idx);
+
+		for (i = 0; i < MAX_CHANNELS_PER_ENC; i++) {
+			if (!dpu_enc->hw_dsc[i])
+				continue;
+			pr_info("nord4-topo: dsc[%d] id=%d pp=%d\n", i,
+				dpu_enc->hw_dsc[i]->idx,
+				dpu_enc->hw_pp[i] ? dpu_enc->hw_pp[i]->idx : -1);
+		}
+
+		for (i = 0; i < dpu_enc->num_phys_encs; i++) {
+			struct dpu_encoder_phys *phys = dpu_enc->phys_encs[i];
+
+			pr_info("nord4-topo: phys[%d] role=%d pp=%d ctl=%d intf=%d\n",
+				i, phys->split_role,
+				phys->hw_pp ? phys->hw_pp->idx : -1,
+				phys->hw_ctl ? phys->hw_ctl->idx : -1,
+				phys->hw_intf ? phys->hw_intf->idx : -1);
+		}
+	}
 }
 
 static void _dpu_encoder_virt_enable_helper(struct drm_encoder *drm_enc)
@@ -1663,6 +1706,13 @@ static void _dpu_encoder_trigger_flush(struct drm_encoder *drm_enc,
 		ctl->ops.update_pending_flush(ctl, extra_flush_bits);
 
 	ctl->ops.trigger_flush(ctl);
+
+	/* HACK 2026-11-19 (F0250): the moment the DPU is told to fetch. */
+	if (nord4_sspp_dump) {
+		dpu_hw_ctl_nord4_dump(ctl, "flush");
+		if (phys->dpu_kms)
+			dpu_plane_nord4_dump(phys->dpu_kms, "flush");
+	}
 
 	if (ctl->ops.get_pending_flush)
 		ret = ctl->ops.get_pending_flush(ctl);

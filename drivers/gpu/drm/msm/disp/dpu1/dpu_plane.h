@@ -50,6 +50,12 @@ struct dpu_plane_state {
 
 void dpu_plane_flush(struct drm_plane *plane);
 
+/* HACK 2026-11-19 (F0250): the re-enable's IOVA-0 instrumentation and the
+ * re-arm candidate.  Both are quiet unless their module parameter is set.
+ */
+void dpu_plane_nord4_dump(struct dpu_kms *kms, const char *tag);
+void dpu_plane_nord4_rearm(struct drm_crtc *crtc);
+
 void dpu_plane_set_error(struct drm_plane *plane, bool error);
 
 struct drm_plane *dpu_plane_init(struct drm_device *dev,

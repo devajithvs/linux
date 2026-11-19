@@ -35,6 +35,11 @@
 #define DPU_ERROR_PLANE(pl, fmt, ...) DPU_ERROR("plane%d " fmt,\
 		(pl) ? (pl)->base.base.id : -1, ##__VA_ARGS__)
 
+/* HACK 2026-11-19 (F0250): counts the plane updates of this boot so the log
+ * can name the clean first set and each re-enable without reading timestamps.
+ */
+static unsigned int nord4_sspp_sets;
+
 #define DECIMATED_DIMENSION(dim, deci) (((dim) + ((1 << (deci)) - 1)) >> (deci))
 #define PHASE_STEP_SHIFT	21
 #define PHASE_STEP_UNIT_SCALE   ((int) (1 << PHASE_STEP_SHIFT))
@@ -1623,6 +1628,7 @@ static void dpu_plane_atomic_update(struct drm_plane *plane,
 	struct dpu_plane *pdpu = to_dpu_plane(plane);
 	struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state,
 									   plane);
+	int i;
 
 	pdpu->is_error = false;
 
@@ -1640,10 +1646,112 @@ static void dpu_plane_atomic_update(struct drm_plane *plane,
 			(unsigned long long)nps->layout.plane_addr[0]);
 	}
 
+	/*
+	 * HACK 2026-11-19 (F0250): the re-enable's IOVA-0 fault has a clean
+	 * SMMU context and identical software addresses, so record the plane's
+	 * own pipes and every address the layout hands the SSPP.  Only plane 0
+	 * carries an address for this linear format; 1..3 are 0.
+	 */
+	if (nord4_sspp_dump && new_state->fb) {
+		struct dpu_plane_state *nps = to_dpu_plane_state(new_state);
+
+		dpu_format_populate_addrs(new_state->fb, &nps->layout);
+		pr_info("nord4-sspp: set#%u plane=%d fb=%u fmt=%p4cc %ux%u addr=0x%llx,0x%llx,0x%llx,0x%llx pitch=%u,%u,%u,%u\n",
+			++nord4_sspp_sets, plane->base.id,
+			new_state->fb->base.id, &new_state->fb->format->format,
+			new_state->fb->width, new_state->fb->height,
+			(unsigned long long)nps->layout.plane_addr[0],
+			(unsigned long long)nps->layout.plane_addr[1],
+			(unsigned long long)nps->layout.plane_addr[2],
+			(unsigned long long)nps->layout.plane_addr[3],
+			nps->layout.plane_pitch[0], nps->layout.plane_pitch[1],
+			nps->layout.plane_pitch[2], nps->layout.plane_pitch[3]);
+		for (i = 0; i < PIPES_PER_PLANE; i++) {
+			if (!nps->pipe[i].sspp)
+				continue;
+			pr_info("nord4-sspp: set#%u pipe[%d] sspp=%d multirect=%d mode=%d src=%ux%u dst=%ux%u\n",
+				nord4_sspp_sets, i, nps->pipe[i].sspp->idx,
+				nps->pipe[i].multirect_index,
+				nps->pipe[i].multirect_mode,
+				drm_rect_width(&nps->pipe_cfg[i].src_rect),
+				drm_rect_height(&nps->pipe_cfg[i].src_rect),
+				drm_rect_width(&nps->pipe_cfg[i].dst_rect),
+				drm_rect_height(&nps->pipe_cfg[i].dst_rect));
+		}
+	}
+
 	if (!new_state->visible) {
 		_dpu_plane_atomic_disable(plane);
 	} else {
 		dpu_plane_sspp_atomic_update(plane, new_state);
+
+		/* HACK 2026-11-19 (F0250): what the SSPP's registers hold now */
+		if (nord4_sspp_dump) {
+			struct dpu_plane_state *nps = to_dpu_plane_state(new_state);
+
+			for (i = 0; i < PIPES_PER_PLANE; i++) {
+				if (!nps->pipe[i].sspp)
+					continue;
+				dpu_hw_sspp_nord4_dump(nps->pipe[i].sspp,
+						       "plane-update");
+			}
+		}
+	}
+}
+
+/* HACK 2026-11-19 (F0250): every SSPP the catalogue knows, read back from
+ * hardware.  Called from the CTL flush, i.e. at the moment the DPU is told to
+ * fetch, so a pipe that was never programmed shows as four zero addresses.
+ */
+void dpu_plane_nord4_dump(struct dpu_kms *kms, const char *tag)
+{
+	int i;
+
+	for (i = 0; i < kms->catalog->sspp_count; i++)
+		dpu_hw_sspp_nord4_dump(dpu_rm_get_sspp(&kms->rm,
+						       kms->catalog->sspp[i].id),
+				       tag);
+}
+
+/* HACK 2026-11-19 (F0250): candidate for the re-enable (nord4_reenable_rearm).
+ * The clean first set and the re-enable write the same registers and set the
+ * same flush bits, so this tests whether the SSPP's shadow write taken at
+ * atomic_update is lost while the interface is stopped: program every visible
+ * plane of the CRTC again at the encoder's enable, before the interface config
+ * and the flush.
+ */
+void dpu_plane_nord4_rearm(struct drm_crtc *crtc)
+{
+	struct drm_plane *plane;
+
+	if (!nord4_reenable_rearm || !crtc || !crtc->state)
+		return;
+
+	drm_atomic_crtc_for_each_plane(plane, crtc) {
+		struct drm_plane_state *state = plane->state;
+		struct dpu_plane_state *pstate;
+		const struct msm_format *fmt;
+		int i;
+
+		if (!state || !state->fb || !state->visible)
+			continue;
+
+		pstate = to_dpu_plane_state(state);
+		fmt = msm_framebuffer_format(state->fb);
+		dpu_format_populate_addrs(state->fb, &pstate->layout);
+
+		pr_info("nord4-sspp: rearm plane=%d fb=%u\n",
+			plane->base.id, state->fb->base.id);
+
+		for (i = 0; i < PIPES_PER_PLANE; i++) {
+			if (!pstate->pipe[i].sspp ||
+			    !drm_rect_width(&pstate->pipe_cfg[i].src_rect))
+				continue;
+			dpu_plane_sspp_update_pipe(plane, &pstate->pipe[i],
+						   &pstate->pipe_cfg[i], fmt,
+						   drm_mode_vrefresh(&crtc->state->adjusted_mode),
+						   &pstate->layout);
+		}
 	}
 }
 

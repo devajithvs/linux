@@ -87,6 +87,28 @@ module_param_named(nord4_aa553_w4_sleepout_ms, nord4_aa553_w4_sleepout_ms, uint,
 MODULE_PARM_DESC(nord4_aa553_w4_sleepout_ms, "wait between sleep-out and display-on, ms (vendor 120)");
 EXPORT_SYMBOL_GPL(nord4_aa553_w4_sleepout_ms);
 
+/* HACK 2026-11-19 (F0250): the SMMU context at the re-enable's fault looks
+ * sound, so the next question is what the DPU fetched from: the plane's
+ * pipes, every SSPP's SRC0-3 as read back from hardware, and the CTL's
+ * active-register block, at the clean first set and at every re-enable.
+ */
+uint nord4_sspp_dump;
+module_param_named(nord4_sspp_dump, nord4_sspp_dump, uint, 0644);
+MODULE_PARM_DESC(nord4_sspp_dump, "1 = dump the plane pipes, SSPP SRC0-3 and CTL active registers");
+EXPORT_SYMBOL_GPL(nord4_sspp_dump);
+
+/* HACK 2026-11-19 (F0250): candidate for the re-enable.  The clean first set
+ * programs each visible plane once and flushes it; the re-enable programs the
+ * same registers and flushes the same bits, so the hypothesis this tests is
+ * that the SSPP's shadow write at atomic_update is not latched while the
+ * interface is stopped.  Re-program the plane at the encoder's enable.
+ * 0 = the tree's behaviour.
+ */
+uint nord4_reenable_rearm;
+module_param_named(nord4_reenable_rearm, nord4_reenable_rearm, uint, 0644);
+MODULE_PARM_DESC(nord4_reenable_rearm, "1 = re-program the visible planes at the cmd-encoder enable (re-enable fix candidate)");
+EXPORT_SYMBOL_GPL(nord4_reenable_rearm);
+
 /* HACK 2026-11-19: candidate for the disable->enable IOVA-0 fault (F0214,
  * F0246): reset the CTL's cached flush state at the command encoder's enable,
  * before the pingpong/intf are reconfigured.  0 = the tree's behaviour.

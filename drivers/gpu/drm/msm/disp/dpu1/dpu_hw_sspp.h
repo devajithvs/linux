@@ -329,6 +329,14 @@ struct dpu_hw_sspp *dpu_hw_sspp_init(struct drm_device *dev,
 				     const struct qcom_ubwc_cfg_data *mdss_data,
 				     const struct dpu_mdss_version *mdss_rev);
 
+/* HACK 2026-11-19 (F0250): read an SSPP's source programming back from the
+ * hardware — SRC0..3 addresses, the Y strides, the format, the op mode, the
+ * fetch config and the UBWC static control — so the clean first set and the
+ * re-enable can be compared register by register.  Quiet unless
+ * nord4_sspp_dump is set.
+ */
+void dpu_hw_sspp_nord4_dump(struct dpu_hw_sspp *ctx, const char *tag);
+
 int _dpu_hw_sspp_init_debugfs(struct dpu_hw_sspp *hw_pipe, struct dpu_kms *kms,
 			      struct dentry *entry);
 
