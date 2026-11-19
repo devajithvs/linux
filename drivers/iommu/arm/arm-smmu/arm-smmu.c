@@ -473,6 +473,16 @@ static irqreturn_t arm_smmu_context_fault(int irq, void *dev)
 	if (ret == -ENOSYS && __ratelimit(&rs))
 		arm_smmu_print_context_fault_info(smmu, idx, &cfi);
 
+	/* HACK 2026-11-19 (Entry 9): the display re-enable faults at IOVA 0; show
+	 * the context bank's own programming at the fault, not just the address.
+	 */
+	if (__ratelimit(&rs))
+		pr_info("nord4-smmu: cb=%d cbar=0x%x cba2r=0x%x sctlr=0x%x fsr=0x%x iova=0x%llx fsynr=0x%x\n",
+			idx, arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBAR(idx)),
+			arm_smmu_gr1_read(smmu, ARM_SMMU_GR1_CBA2R(idx)),
+			arm_smmu_cb_read(smmu, idx, ARM_SMMU_CB_SCTLR),
+			cfi.fsr, cfi.iova, cfi.fsynr);
+
 	arm_smmu_cb_write(smmu, idx, ARM_SMMU_CB_FSR, cfi.fsr);
 
 	if (cfi.fsr & ARM_SMMU_CB_FSR_SS) {
