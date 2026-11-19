@@ -276,8 +276,10 @@ static int aa553_prepare(struct drm_panel *panel)
 	int ret;
 
 	ret = regulator_enable(ctx->supplies[0].consumer);
-	if (ret < 0)
+	if (ret < 0) {
+		pr_err("nord4-panel: prepare: vddio enable ret=%d\n", ret);
 		return ret;
+	}
 
 	usleep_range(2000, 3000);
 
@@ -289,8 +291,10 @@ static int aa553_prepare(struct drm_panel *panel)
 	usleep_range(1000, 2000);
 
 	ret = regulator_enable(ctx->supplies[1].consumer);
-	if (ret < 0)
+	if (ret < 0) {
+		pr_err("nord4-panel: prepare: vci enable ret=%d\n", ret);
 		goto err_disable_vddio;
+	}
 
 	usleep_range(15000, 16000);
 
@@ -298,8 +302,11 @@ static int aa553_prepare(struct drm_panel *panel)
 	usleep_range(1000, 2000);
 
 	ret = aa553_on(ctx);
-	if (ret < 0)
+	pr_info("nord4-panel: prepare: on ret=%d accum=%d\n", ret, dsi_ctx.accum_err);
+	if (ret < 0) {
+		pr_err("nord4-panel: prepare: the on table failed, accum=%d\n", dsi_ctx.accum_err);
 		goto err_disable;
+	}
 
 	/* HACK: nord4_dsc_pps_when 0 = after display-on, today's order */
 	if (nord4_dsc_pps_when == 0)
@@ -307,6 +314,7 @@ static int aa553_prepare(struct drm_panel *panel)
 
 	if (dsi_ctx.accum_err < 0) {
 		ret = dsi_ctx.accum_err;
+		pr_err("nord4-panel: prepare: pps accum=%d\n", dsi_ctx.accum_err);
 		goto err_disable;
 	}
 
@@ -318,6 +326,8 @@ static int aa553_prepare(struct drm_panel *panel)
 	 */
 	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
 	ctx->prepared = true;
+	pr_info("nord4-panel: prepare: ok, accum=%d prepared=%d\n",
+		dsi_ctx.accum_err, ctx->prepared);
 
 	return 0;
 
@@ -429,8 +439,26 @@ static int aa553_get_modes(struct drm_panel *panel, struct drm_connector *connec
 static int aa553_enable(struct drm_panel *panel)
 {
 	struct aa553_panel *ctx = to_aa553_panel(panel);
+	struct backlight_device *bl = ctx->panel.backlight;
+	u8 buf[2] = { 0xff, 0xff };
+	int ret, r0a, r51;
 
-	return backlight_enable(ctx->panel.backlight);
+	ret = backlight_enable(bl);
+
+	/*
+	 * The DDIC's own state right after the backlight enable.  A DCS read
+	 * is a low-power-mode transfer (aa553_readback()).
+	 */
+	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+	r0a = mipi_dsi_dcs_read(ctx->dsi, 0x0a, &buf[0], 1);
+	r51 = mipi_dsi_dcs_read(ctx->dsi, 0x51, &buf[1], 1);
+	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+
+	pr_info("nord4-panel: enable: backlight_enable ret=%d prepared=%d level=%d 0x0a ret=%d val=%02x 0x51 ret=%d val=%02x\n",
+		ret, ctx->prepared, backlight_get_brightness(bl), r0a, buf[0],
+		r51, buf[1]);
+
+	return ret;
 }
 
 static int aa553_disable(struct drm_panel *panel)
