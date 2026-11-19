@@ -27,6 +27,10 @@
  */
 extern uint nord4_dsc_pps_when;
 extern uint nord4_dsc_readback;
+extern uint nord4_aa553_w1_reset_hold_us;
+extern uint nord4_aa553_w2_reset_settle_us;
+extern uint nord4_aa553_w3_pps_ms;
+extern uint nord4_aa553_w4_sleepout_ms;
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_modes.h>
 #include <drm/drm_panel.h>
