@@ -34,7 +34,6 @@
 #include "dpu_encoder_phys.h"
 #include "dpu_crtc.h"
 #include "dpu_plane.h"
-#include "dpu_vbif.h"
 #include "dpu_trace.h"
 #include "dpu_core_irq.h"
 #include "disp/msm_disp_snapshot.h"
@@ -2161,23 +2160,8 @@ void dpu_encoder_prepare_for_kickoff(struct drm_encoder *drm_enc)
 
 	dpu_encoder_resource_control(drm_enc, DPU_ENC_RC_EVENT_KICKOFF);
 
-	/*
-	 * HACK 2026-11-19 (F0253 follow-up): the planes are normally programmed
-	 * in commit_planes, before commit_modeset_enables.  Here every enable
-	 * has run and the flush has not: candidates (both off by default).
-	 */
 	if (nord4_sspp_dump && drm_enc->crtc)
 		dpu_plane_nord4_clk(drm_enc->crtc, "pre-flush");
-	if (drm_enc->crtc)
-		dpu_plane_nord4_reprogram(drm_enc->crtc);
-	if (nord4_vbif_restore && dpu_enc->num_phys_encs &&
-	    dpu_enc->phys_encs[0]->dpu_kms) {
-		struct dpu_kms *kms = dpu_enc->phys_encs[0]->dpu_kms;
-
-		dpu_kms_nord4_state(kms, "vbif-restore-before", true);
-		dpu_vbif_init_memtypes(kms);
-		dpu_kms_nord4_state(kms, "vbif-restore-after", true);
-	}
 
 	/* if any phys needs reset, reset all phys, in-order */
 	if (needs_hw_reset) {

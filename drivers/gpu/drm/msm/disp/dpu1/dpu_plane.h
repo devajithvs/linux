@@ -54,9 +54,7 @@ void dpu_plane_flush(struct drm_plane *plane);
  * re-arm candidate.  Both are quiet unless their module parameter is set.
  */
 void dpu_plane_nord4_dump(struct dpu_kms *kms, const char *tag);
-void dpu_plane_nord4_rearm(struct drm_crtc *crtc);
 void dpu_plane_nord4_probe(struct drm_crtc *crtc, const char *tag);
-void dpu_plane_nord4_reprogram(struct drm_crtc *crtc);
 void dpu_plane_nord4_clk(struct drm_crtc *crtc, const char *tag);
 
 void dpu_plane_set_error(struct drm_plane *plane, bool error);

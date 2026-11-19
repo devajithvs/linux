@@ -475,24 +475,11 @@ static void dpu_encoder_phys_cmd_enable_helper(
 		return;
 	}
 
-	/*
-	 * HACK 2026-11-19 (F0250): candidate for the re-enable's IOVA-0 fault.
-	 * Re-program the CRTC's visible planes here, while the interface is
-	 * still stopped and before the interface config arms the flush, so the
-	 * SSPP address the flush latches is written in this commit.
-	 */
+	/* HACK 2026-11-19 (F0252/F0256): instrumentation only. */
 	if (phys_enc->parent->crtc)
 		dpu_plane_nord4_probe(phys_enc->parent->crtc, "enable");
-	if (nord4_reenable_rearm && phys_enc->parent->crtc)
-		dpu_plane_nord4_rearm(phys_enc->parent->crtc);
 
 	dpu_encoder_helper_split_config(phys_enc, phys_enc->hw_intf->idx);
-
-	if (nord4_ctl_reset_on_enable) {
-		ctl = phys_enc->hw_ctl;
-		pr_info("nord4-reen: CTL reset on enable, pending_before=0x%x rc=%d\n",
-			ctl->ops.get_pending_flush(ctl), ctl->ops.reset(ctl));
-	}
 
 	_dpu_encoder_phys_cmd_pingpong_config(phys_enc);
 

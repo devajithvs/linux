@@ -914,15 +914,19 @@ static void dpu_crtc_atomic_begin(struct drm_crtc *crtc,
 	DRM_DEBUG_ATOMIC("crtc%d\n", crtc->base.id);
 
 	/*
-	 * HACK 2026-11-19 (F0255 follow-up): the core-clock vote normally runs
-	 * in dpu_crtc_atomic_flush(), after the plane writes; take it here,
-	 * before them, so the SSPP clock is open when the plane is programmed.
+	 * F0256: take the core-clock/bandwidth vote before the plane writes.
+	 * commit_planes() programs the planes and only then runs this CRTC's
+	 * atomic_flush(), whose vote is what opens the SSPP's clock (0x330
+	 * 0 -> 0x4); a plane written in between is discarded and the first
+	 * frame after an off/on fetches IOVA 0.  The vote here is the same
+	 * dpu_core_perf_crtc_update() with the CRTC's new state; the flush's
+	 * call then finds nothing to change.
 	 */
-	if (nord4_clk_vote_early && crtc->state->enable) {
+	if (nord4_sspp_dump)
 		dpu_plane_nord4_clk(crtc, "begin-before-vote");
-		dpu_core_perf_nord4_early(crtc);
+	dpu_core_perf_crtc_update(crtc, 1);
+	if (nord4_sspp_dump)
 		dpu_plane_nord4_clk(crtc, "begin-after-vote");
-	}
 
 	_dpu_crtc_check_and_setup_lm_bounds(crtc, crtc->state);
 

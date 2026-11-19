@@ -42,21 +42,6 @@ extern uint nord4_dsc_dump;
  * the CTL's active registers at every plane update and every CTL flush
  */
 extern uint nord4_sspp_dump;
-/* 0 = the tree's behaviour, 1 = re-program every visible plane of the CRTC at
- * the command encoder's enable (re-enable fix candidate)
- */
-extern uint nord4_reenable_rearm;
-/* 0 = the tree's behaviour, 1 = force the SSPP clock on before programming it
- * at the enable (re-enable fix candidate)
- */
-extern uint nord4_sspp_clk_force;
-/* 1 = re-program the visible planes after the enables, before the flush */
-extern uint nord4_program_before_flush;
-/* 1 = re-write the VBIF memtypes after the enables, before the flush */
-extern uint nord4_vbif_restore;
-/* 1 = core clock/bus vote before the plane writes */
-extern uint nord4_clk_vote_early;
-extern uint nord4_ctl_reset_on_enable;
 extern uint nord4_aa553_w1_reset_hold_us;
 extern uint nord4_aa553_w2_reset_settle_us;
 extern uint nord4_aa553_w3_pps_ms;

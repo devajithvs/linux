@@ -60,11 +60,6 @@ u64 dpu_core_perf_adjusted_mode_clk(u64 clk_rate,
 int dpu_core_perf_crtc_check(struct drm_crtc *crtc,
 		struct drm_crtc_state *state);
 
-/* HACK 2026-11-19 (F0255 follow-up): the core-clock/bus vote before the plane
- * writes, from the CRTC's new state.
- */
-int dpu_core_perf_nord4_early(struct drm_crtc *crtc);
-
 int dpu_core_perf_crtc_update(struct drm_crtc *crtc,
 			      int params_changed);
 

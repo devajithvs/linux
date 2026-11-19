@@ -150,7 +150,7 @@ static void dpu_core_perf_aggregate(struct drm_device *ddev,
 	struct drm_crtc *tmp_crtc;
 
 	drm_for_each_crtc(tmp_crtc, ddev) {
-		if (tmp_crtc->enabled &&
+		if (tmp_crtc->state->enable &&
 		    curr_client_type == dpu_crtc_get_client_type(tmp_crtc)) {
 			dpu_cstate = to_dpu_crtc_state(tmp_crtc->state);
 
@@ -297,7 +297,7 @@ static u64 _dpu_core_perf_get_core_clk_rate(struct dpu_kms *kms)
 
 	clk_rate = 0;
 	drm_for_each_crtc(crtc, kms->dev) {
-		if (crtc->enabled) {
+		if (crtc->state->enable) {
 			dpu_cstate = to_dpu_crtc_state(crtc->state);
 			clk_rate = max(dpu_cstate->new_perf.core_clk_rate,
 							clk_rate);
@@ -335,12 +335,12 @@ int dpu_core_perf_crtc_update(struct drm_crtc *crtc,
 	dpu_cstate = to_dpu_crtc_state(crtc->state);
 
 	DRM_DEBUG_ATOMIC("crtc:%d enabled:%d core_clk:%llu\n",
-			crtc->base.id, crtc->enabled, kms->perf.core_clk_rate);
+			crtc->base.id, crtc->state->enable, kms->perf.core_clk_rate);
 
 	old = &dpu_crtc->cur_perf;
 	new = &dpu_cstate->new_perf;
 
-	if (crtc->enabled) {
+	if (crtc->state->enable) {
 		/*
 		 * cases for bus bandwidth update.
 		 * 1. new bandwidth vote - "ab or ib vote" is higher
@@ -373,7 +373,7 @@ int dpu_core_perf_crtc_update(struct drm_crtc *crtc,
 	}
 
 	trace_dpu_perf_crtc_update(crtc->base.id, new->bw_ctl,
-		new->core_clk_rate, !crtc->enabled, update_bus, update_clk);
+		new->core_clk_rate, !crtc->state->enable, update_bus, update_clk);
 
 	if (update_bus) {
 		ret = _dpu_core_perf_crtc_update_bus(kms, crtc);
@@ -393,7 +393,7 @@ int dpu_core_perf_crtc_update(struct drm_crtc *crtc,
 
 		DRM_DEBUG_ATOMIC("clk:%llu\n", clk_rate);
 
-		trace_dpu_core_perf_update_clk(kms->dev, !crtc->enabled, clk_rate);
+		trace_dpu_core_perf_update_clk(kms->dev, !crtc->state->enable, clk_rate);
 
 		clk_rate = min(clk_rate, kms->perf.max_core_clk_rate);
 		ret = dev_pm_opp_set_rate(&kms->pdev->dev, clk_rate);
@@ -404,42 +404,14 @@ int dpu_core_perf_crtc_update(struct drm_crtc *crtc,
 
 		kms->perf.core_clk_rate = clk_rate;
 		DRM_DEBUG_ATOMIC("update clk rate = %lld HZ\n", clk_rate);
+
+		/* HACK 2026-11-19 (F0256): the vote that opens the SSPP clock. */
+		if (nord4_sspp_dump)
+			pr_info("nord4-vote: crtc=%d rate=%llu suspended=%d\n",
+				crtc->base.id, clk_rate,
+				pm_runtime_status_suspended(&kms->pdev->dev));
 	}
 	return 0;
-}
-
-/* HACK 2026-11-19 (F0255 follow-up): the same vote dpu_core_perf_crtc_update()
- * makes in dpu_crtc_atomic_flush(), but taken from the CRTC's *new* state and
- * before the plane writes (atomic_begin), where crtc->enabled is still false.
- */
-int dpu_core_perf_nord4_early(struct drm_crtc *crtc)
-{
-	struct dpu_kms *kms = _dpu_crtc_get_kms(crtc);
-	struct dpu_crtc_state *cstate = to_dpu_crtc_state(crtc->state);
-	u64 rate, avg_bw, peak_bw;
-	int i, ret;
-
-	if (!kms || !cstate)
-		return -EINVAL;
-
-	rate = min_t(u64, cstate->new_perf.core_clk_rate,
-		     kms->perf.max_core_clk_rate);
-	avg_bw = div_u64(cstate->new_perf.bw_ctl, 1000);
-	peak_bw = cstate->new_perf.max_per_pipe_ib;
-
-	if (kms->num_paths) {
-		avg_bw /= kms->num_paths;
-		for (i = 0; i < kms->num_paths; i++)
-			icc_set_bw(kms->path[i], avg_bw, peak_bw);
-	}
-
-	ret = dev_pm_opp_set_rate(&kms->pdev->dev, rate);
-	if (nord4_sspp_dump)
-		pr_info("nord4-vote: early rate=%llu bw=%llu/%llu ret=%d suspended=%d\n",
-			rate, (unsigned long long)cstate->new_perf.bw_ctl,
-			(unsigned long long)cstate->new_perf.max_per_pipe_ib, ret,
-			pm_runtime_status_suspended(&kms->pdev->dev));
-	return ret;
 }
 
 #ifdef CONFIG_DEBUG_FS
