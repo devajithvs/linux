@@ -912,6 +912,21 @@ static void dpu_crtc_atomic_begin(struct drm_crtc *crtc,
 
 	DRM_DEBUG_ATOMIC("crtc%d\n", crtc->base.id);
 
+	/*
+	 * Take the core clock/bandwidth vote before the plane writes.
+	 *
+	 * commit_planes() programs the planes and only then runs this CRTC's
+	 * atomic_flush(), whose dpu_core_perf_crtc_update() vote is what opens
+	 * each SSPP's per-block clock (SSPP_CLK_CTRL reads 0 at atomic_update
+	 * and 0x4 after the vote).  A plane programmed before the vote is
+	 * discarded, so after a disable->enable the DPU fetched SRC0 = 0 (an
+	 * IOVA 0 translation fault) and the first frame timed out; a boot's
+	 * first set escaped only because the bootloader leaves the clock open
+	 * (F0253, F0255, F0256).  The vote here is the same call with the
+	 * CRTC's new state; the flush's call then finds nothing to change.
+	 */
+	dpu_core_perf_crtc_update(crtc, 1);
+
 	_dpu_crtc_check_and_setup_lm_bounds(crtc, crtc->state);
 
 	/* encoder will trigger pending mask now */
