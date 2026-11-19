@@ -66,12 +66,17 @@ static inline struct aa553_panel *to_aa553_panel(struct drm_panel *panel)
  */
 static void aa553_reset(struct aa553_panel *ctx)
 {
-	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
-	usleep_range(2000, 3000);
+	/*
+	 * HACK 2026-11-19: the vendor's qcom,mdss-dsi-reset-sequence is
+	 * <1 2>, <0 5>, <1 25> (dsi-panel-AA553-P-7-A0001-dsc-cmd.dtsi:25).
+	 * Same level order, every sleep doubled.
+	 */
 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
-	usleep_range(5000, 6000);
+	usleep_range(4000, 5000);
 	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
-	usleep_range(25000, 26000);
+	usleep_range(10000, 11000);
+	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
+	usleep_range(50000, 51000);
 }
 
 /*
@@ -93,7 +98,48 @@ static void aa553_send_pps(struct aa553_panel *ctx,
 	drm_dsc_pps_payload_pack(&pps, &ctx->dsc);
 	mipi_dsi_picture_parameter_set_multi(dsi_ctx, &pps);
 
-	mipi_dsi_msleep(dsi_ctx, 28);
+	/* vendor PPS-to-display-on 28 ms, doubled */
+	mipi_dsi_msleep(dsi_ctx, 56);
+}
+
+/*
+ * HACK 2026-11-19: the init table's own writes, read back after the same page
+ * unlock, so a dropped write is a number and not a guess.
+ */
+static void aa553_verify_pages(struct aa553_panel *ctx,
+			       struct mipi_dsi_multi_context *dsi_ctx)
+{
+	static const struct {
+		u8 page, cmd, len;
+		u8 expect[4];
+	} reads[] = {
+		{ 0x01, 0xc5, 4, { 0x15, 0x15, 0x15, 0xdd } },
+		{ 0x01, 0xfe, 1, { 0x3c } },
+		{ 0x1a, 0xf4, 1, { 0x55 } },
+		{ 0x12, 0xfe, 1, { 0x41 } },
+	};
+	u8 buf[4];
+	int i, ret;
+
+	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+	for (i = 0; i < ARRAY_SIZE(reads); i++) {
+		/* the page is a runtime value: the _seq_multi macro needs a
+		 * compile-time initializer, so send the switch directly
+		 */
+		u8 sw[5] = { 0x55, 0xaa, 0x52, 0x08, reads[i].page };
+
+		mipi_dsi_dcs_write(dsi_ctx->dsi, AA553_DCS_SWITCH_PAGE, sw, sizeof(sw));
+		mipi_dsi_dcs_write_seq_multi(dsi_ctx, 0xff, 0xaa, 0x55, 0xa5, 0x81);
+		memset(buf, 0xff, sizeof(buf));
+		ret = mipi_dsi_dcs_read(ctx->dsi, reads[i].cmd, buf, reads[i].len);
+		pr_info("nord4-panel: verify page 0x%02x cmd 0x%02x ret=%d got %*phN expected %*phN %s\n",
+			reads[i].page, reads[i].cmd, ret, reads[i].len, buf,
+			reads[i].len, reads[i].expect,
+			(ret == reads[i].len &&
+			 !memcmp(buf, reads[i].expect, reads[i].len)) ? "MATCH" : "DIFF");
+	}
+	aa553_switch_page(dsi_ctx, 0x00);
+	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
 }
 
 static int aa553_on(struct aa553_panel *ctx)
@@ -235,10 +281,14 @@ static int aa553_on(struct aa553_panel *ctx)
 	if (nord4_dsc_pps_when == 1)
 		aa553_send_pps(ctx, &dsi_ctx);
 	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
-	mipi_dsi_msleep(&dsi_ctx, 120);
+	/* vendor 0x78 = 120 ms after sleep-out, doubled */
+	mipi_dsi_msleep(&dsi_ctx, 240);
 	if (nord4_dsc_pps_when == 2)
 		aa553_send_pps(ctx, &dsi_ctx);
 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
+
+	if (dsi_ctx.accum_err == 0)
+		aa553_verify_pages(ctx, &dsi_ctx);
 
 	return dsi_ctx.accum_err;
 }
@@ -275,20 +325,33 @@ static int aa553_prepare(struct drm_panel *panel)
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 	int ret;
 
+	/*
+	 * HACK 2026-11-19: the bootloader leaves both rails on and the panel
+	 * running, so a plain regulator_enable() is a no-op and the DDIC never
+	 * sees a real power cycle.  Force the vendor's power-off first: reset
+	 * asserted, vci off, vddio off, 200 ms.
+	 */
+	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
+	regulator_force_disable(ctx->supplies[1].consumer);
+	regulator_force_disable(ctx->supplies[0].consumer);
+	usleep_range(200000, 210000);
+
 	ret = regulator_enable(ctx->supplies[0].consumer);
 	if (ret < 0) {
 		pr_err("nord4-panel: prepare: vddio enable ret=%d\n", ret);
 		return ret;
 	}
 
-	usleep_range(2000, 3000);
+	/* vendor 2 ms post-on, doubled */
+	usleep_range(4000, 5000);
 
 	/*
 	 * The vci entry also asks for a 1 ms pre-on sleep
 	 * (audi-23803-display-cliffs-overlay.dtsi:39), so the rail comes up
 	 * 3 ms after vddio, not 2 ms.
 	 */
-	usleep_range(1000, 2000);
+	/* vendor 1 ms pre-on, doubled */
+	usleep_range(2000, 3000);
 
 	ret = regulator_enable(ctx->supplies[1].consumer);
 	if (ret < 0) {
@@ -296,10 +359,12 @@ static int aa553_prepare(struct drm_panel *panel)
 		goto err_disable_vddio;
 	}
 
-	usleep_range(15000, 16000);
+	/* vendor 15 ms after vci, doubled */
+	usleep_range(30000, 31000);
 
 	aa553_reset(ctx);
-	usleep_range(1000, 2000);
+	/* vendor init-delay-us 1000, doubled */
+	usleep_range(2000, 3000);
 
 	ret = aa553_on(ctx);
 	pr_info("nord4-panel: prepare: on ret=%d accum=%d\n", ret, dsi_ctx.accum_err);
