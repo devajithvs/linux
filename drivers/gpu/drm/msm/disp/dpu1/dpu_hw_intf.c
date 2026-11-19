@@ -9,6 +9,7 @@
 #include "dpu_hw_intf.h"
 #include "dpu_kms.h"
 #include "dpu_trace.h"
+#include "../msm_nord4_geo.h"
 
 #include <linux/iopoll.h>
 
@@ -591,6 +592,16 @@ static void dpu_hw_intf_program_intf_cmd_cfg(struct dpu_hw_intf *intf,
 					     struct dpu_hw_intf_cmd_mode_cfg *cmd_mode_cfg)
 {
 	u32 intf_cfg2 = DPU_REG_READ(&intf->hw, INTF_CONFIG2);
+	bool dump = nord4_dsc_dump || nord4_intf_data_hctl >= 0;
+
+	if (nord4_dsc_dump)
+		pr_info("nord4-geo: intf%d before CONFIG=0x%08x CONFIG2=0x%08x DISPLAY_HCTL=0x%08x DATA_HCTL=0x%08x ACTIVE_DATA_HCTL=0x%08x\n",
+			intf->idx - INTF_0,
+			DPU_REG_READ(&intf->hw, INTF_CONFIG),
+			intf_cfg2,
+			DPU_REG_READ(&intf->hw, INTF_DISPLAY_HCTL),
+			DPU_REG_READ(&intf->hw, INTF_DISPLAY_DATA_HCTL),
+			DPU_REG_READ(&intf->hw, INTF_ACTIVE_DATA_HCTL));
 
 	if (cmd_mode_cfg->data_compress)
 		intf_cfg2 |= INTF_CFG2_DCE_DATA_COMPRESS;
@@ -599,6 +610,32 @@ static void dpu_hw_intf_program_intf_cmd_cfg(struct dpu_hw_intf *intf,
 		intf_cfg2 |= INTF_CFG2_DATABUS_WIDEN;
 
 	DPU_REG_WRITE(&intf->hw, INTF_CONFIG2, intf_cfg2);
+
+	/*
+	 * F0263 H1: the compressed-data valid window.  Command mode never
+	 * programs it (both trees do it only in the video path), so its value
+	 * is whatever reset or the bootloader left.  Written after CONFIG2's
+	 * data-hctl enable so the value is latched on this frame; -1 writes
+	 * nothing.
+	 */
+	if (nord4_intf_data_hctl >= 0) {
+		u32 start = nord4_intf_data_hctl;
+		u32 hctl = ((start + 206) << 16) | start;
+
+		DPU_REG_WRITE(&intf->hw, INTF_DISPLAY_DATA_HCTL, hctl);
+		DPU_REG_WRITE(&intf->hw, INTF_ACTIVE_DATA_HCTL, hctl);
+		pr_info("nord4-geo: intf%d P1 data_hctl start=%u end=%u wrote 0x%08x to 0x064/0x068\n",
+			intf->idx - INTF_0, start, start + 206, hctl);
+	}
+
+	if (dump)
+		pr_info("nord4-geo: intf%d after CONFIG=0x%08x CONFIG2=0x%08x DISPLAY_HCTL=0x%08x DATA_HCTL=0x%08x ACTIVE_DATA_HCTL=0x%08x\n",
+			intf->idx - INTF_0,
+			DPU_REG_READ(&intf->hw, INTF_CONFIG),
+			DPU_REG_READ(&intf->hw, INTF_CONFIG2),
+			DPU_REG_READ(&intf->hw, INTF_DISPLAY_HCTL),
+			DPU_REG_READ(&intf->hw, INTF_DISPLAY_DATA_HCTL),
+			DPU_REG_READ(&intf->hw, INTF_ACTIVE_DATA_HCTL));
 }
 
 /**

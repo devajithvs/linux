@@ -27,6 +27,8 @@
 
 #include <video/mipi_display.h>
 
+#include "../msm/msm_nord4_geo.h"
+
 struct aa553_panel {
 	struct drm_panel panel;
 	struct mipi_dsi_device *dsi;
@@ -238,6 +240,29 @@ static int aa553_on(struct aa553_panel *ctx)
 	/* vendor 0x78 = 120 ms after sleep-out, doubled */
 	mipi_dsi_msleep(&dsi_ctx, 240);
 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
+
+	/*
+	 * F0263 P4/P5: the two DDIC-side discriminators, both after 0x29 and
+	 * both inert by default.  P4 re-sends the vendor window in HS (the
+	 * earlier 0x2a trials were LP only); the next frame is the mode set
+	 * the caller is about to make.  P5 pokes page-1 0x17, the panel's
+	 * own column/state byte, without re-initialising the panel.
+	 */
+	if (nord4_dd_wr_hs) {
+		dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2a, 0x00, 0x00, 0x04, 0xd7);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2b, 0x00, 0x00, 0x0a, 0xd3);
+		dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+		pr_info("nord4-geo: P4 sent 0x2a=0000..04d7 0x2b=0000..0ad3 in HS after 0x29\n");
+	}
+
+	if (nord4_dd17 >= 0) {
+		aa553_switch_page(&dsi_ctx, 0x01);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x17, nord4_dd17 & 0xff);
+		aa553_switch_page(&dsi_ctx, 0x00);
+		pr_info("nord4-geo: P5 page-1 0x17=0x%02x after 0x29\n",
+			nord4_dd17 & 0xff);
+	}
 
 	return dsi_ctx.accum_err;
 }

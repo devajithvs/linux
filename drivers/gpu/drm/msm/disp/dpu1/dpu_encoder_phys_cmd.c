@@ -7,6 +7,7 @@
 #include <linux/delay.h>
 #include <linux/string_choices.h>
 #include "dpu_encoder_phys.h"
+#include "../msm_nord4_geo.h"
 #include "dpu_hw_interrupts.h"
 #include "dpu_hw_pingpong.h"
 #include "dpu_core_irq.h"
@@ -15,6 +16,10 @@
 #include "disp/msm_disp_snapshot.h"
 
 #include <drm/drm_managed.h>
+
+/* F0263 H3: the frame counters P3 reads back from the target, not from kms-hold. */
+static atomic_t nord4_kickoff_cnt = ATOMIC_INIT(0);
+static atomic_t nord4_ppdone_cnt = ATOMIC_INIT(0);
 
 #define DPU_DEBUG_CMDENC(e, fmt, ...) DPU_DEBUG("enc%d intf%d " fmt, \
 		(e) && (e)->base.parent ? \
@@ -95,6 +100,12 @@ static void dpu_encoder_phys_cmd_pp_tx_done_irq(void *arg)
 		return;
 
 	DPU_ATRACE_BEGIN("pp_done_irq");
+	if (nord4_dsc_dump) {
+		int n = atomic_inc_return(&nord4_ppdone_cnt);
+
+		pr_info("nord4-geo: pp-done n=%d pp=%d\n", n,
+			phys_enc->hw_pp->idx - PINGPONG_0);
+	}
 	/* notify all synchronous clients first, then asynchronous clients */
 	dpu_encoder_frame_done_callback(phys_enc->parent, phys_enc, event);
 
@@ -707,6 +718,12 @@ static void dpu_encoder_phys_cmd_handle_post_kickoff(
 static void dpu_encoder_phys_cmd_trigger_start(
 		struct dpu_encoder_phys *phys_enc)
 {
+	if (nord4_dsc_dump) {
+		int n = atomic_inc_return(&nord4_kickoff_cnt);
+
+		pr_info("nord4-geo: kickoff n=%d pending=%d\n", n,
+			atomic_read(&phys_enc->pending_kickoff_cnt));
+	}
 	dpu_encoder_helper_trigger_start(phys_enc);
 }
 

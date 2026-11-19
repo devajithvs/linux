@@ -29,6 +29,7 @@
 #include "dsi_cfg.h"
 #include "msm_dsc_helper.h"
 #include "msm_kms.h"
+#include "msm_nord4_geo.h"
 #include "msm_gem.h"
 #include "phy/dsi_phy.h"
 
@@ -1001,6 +1002,17 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 
 	DBG("");
 
+	/* F0263 P0: the DSI state before this enable programs anything. */
+	if (nord4_dsc_dump)
+		pr_info("nord4-geo: dsi before CTRL=0x%08x ACTIVE_H=0x%08x TOTAL=0x%08x STREAM0_CTRL=0x%08x STREAM0_TOTAL=0x%08x COMP_CTRL=0x%08x COMP_CTRL2=0x%08x\n",
+			dsi_read(msm_host, REG_DSI_CTRL),
+			dsi_read(msm_host, REG_DSI_ACTIVE_H),
+			dsi_read(msm_host, REG_DSI_TOTAL),
+			dsi_read(msm_host, REG_DSI_CMD_MDP_STREAM0_CTRL),
+			dsi_read(msm_host, REG_DSI_CMD_MDP_STREAM0_TOTAL),
+			dsi_read(msm_host, REG_DSI_COMMAND_COMPRESSION_MODE_CTRL),
+			dsi_read(msm_host, REG_DSI_COMMAND_COMPRESSION_MODE_CTRL2));
+
 
 	/*
 	 * For bonded DSI mode, the current DRM mode has
@@ -1116,6 +1128,17 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 			DSI_CMD_MDP_STREAM0_TOTAL_V_TOTAL(mode->vdisplay));
 	}
 
+	/* F0263 P0: the same registers after this enable programmed them. */
+	if (nord4_dsc_dump)
+		pr_info("nord4-geo: dsi after CTRL=0x%08x ACTIVE_H=0x%08x TOTAL=0x%08x STREAM0_CTRL=0x%08x STREAM0_TOTAL=0x%08x COMP_CTRL=0x%08x COMP_CTRL2=0x%08x hdisplay=%u h_total=%u\n",
+			dsi_read(msm_host, REG_DSI_CTRL),
+			dsi_read(msm_host, REG_DSI_ACTIVE_H),
+			dsi_read(msm_host, REG_DSI_TOTAL),
+			dsi_read(msm_host, REG_DSI_CMD_MDP_STREAM0_CTRL),
+			dsi_read(msm_host, REG_DSI_CMD_MDP_STREAM0_TOTAL),
+			dsi_read(msm_host, REG_DSI_COMMAND_COMPRESSION_MODE_CTRL),
+			dsi_read(msm_host, REG_DSI_COMMAND_COMPRESSION_MODE_CTRL2),
+			hdisplay, h_total);
 }
 
 static void dsi_sw_reset(struct msm_dsi_host *msm_host)
