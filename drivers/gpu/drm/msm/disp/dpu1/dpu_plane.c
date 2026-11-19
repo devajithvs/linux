@@ -27,6 +27,7 @@
 #include "dpu_crtc.h"
 #include "dpu_vbif.h"
 #include "dpu_plane.h"
+#include "../msm_nord4_geo.h"
 
 #define DPU_DEBUG_PLANE(pl, fmt, ...) DRM_DEBUG_ATOMIC("plane%d " fmt,\
 		(pl) ? (pl)->base.base.id : -1, ##__VA_ARGS__)
@@ -948,9 +949,35 @@ static int dpu_plane_split(struct drm_plane *plane,
 		DPU_DEBUG_PLANE(pdpu, "Got clip src:" DRM_RECT_FMT " dst: " DRM_RECT_FMT "\n",
 				DRM_RECT_ARG(&pipe_cfg->src_rect), DRM_RECT_ARG(&pipe_cfg->dst_rect));
 
-		/* Split wide rect into 2 rect */
-		if ((drm_rect_width(&pipe_cfg->src_rect) > max_linewidth) ||
-		     _dpu_plane_calc_clk(mode, pipe_cfg) > max_mdp_clk_rate) {
+		/*
+		 * nord4_split_fetch: the bootloader's per-LM line fetch
+		 * (F0271 §2, §6 rank 1).  Each of the two LMs reads its own
+		 * half of the line through its own SSPP: source x 0 for the
+		 * left half, source x hdisplay/2 for the right half, and
+		 * destination x 0 in each mixer, which is 620 px wide there.
+		 * Only the plane that covers the whole mode is split; a
+		 * narrower plane keeps the single-pipe path.
+		 */
+		if (nord4_split_fetch && stage_id == 0 && num_lm == 2 &&
+		    !(new_plane_state->rotation & DRM_MODE_ROTATE_90) &&
+		    !(mode->hdisplay & 0x1) &&
+		    drm_rect_width(&pipe_cfg->src_rect) == mode->hdisplay &&
+		    drm_rect_width(&pipe_cfg->dst_rect) == mode->hdisplay) {
+			memcpy(r_pipe_cfg, pipe_cfg, sizeof(struct dpu_sw_pipe_cfg));
+			pipe_cfg->src_rect.x2 = pipe_cfg->src_rect.x1 +
+				mode->hdisplay / 2;
+			pipe_cfg->dst_rect.x2 = pipe_cfg->dst_rect.x1 +
+				mode->hdisplay / 2;
+			r_pipe_cfg->src_rect.x1 = pipe_cfg->src_rect.x2;
+			r_pipe_cfg->dst_rect.x1 = pipe_cfg->dst_rect.x1;
+			r_pipe_cfg->dst_rect.x2 = pipe_cfg->dst_rect.x1 +
+				mode->hdisplay / 2;
+			DPU_DEBUG_PLANE(pdpu, "Split plane per LM into:"
+					DRM_RECT_FMT " and " DRM_RECT_FMT "\n",
+					DRM_RECT_ARG(&pipe_cfg->src_rect),
+					DRM_RECT_ARG(&r_pipe_cfg->src_rect));
+		} else if ((drm_rect_width(&pipe_cfg->src_rect) > max_linewidth) ||
+			   _dpu_plane_calc_clk(mode, pipe_cfg) > max_mdp_clk_rate) {
 
 			if (drm_rect_width(&pipe_cfg->src_rect) > 2 * max_linewidth) {
 				DPU_DEBUG_PLANE(pdpu, "invalid src " DRM_RECT_FMT " line:%u\n",
@@ -1220,11 +1247,25 @@ static int dpu_plane_assign_resource_in_stage(struct dpu_sw_pipe *pipe,
 	struct dpu_kms *dpu_kms = _dpu_plane_get_kms(plane);
 	struct dpu_sw_pipe *r_pipe = pipe + 1;
 	struct dpu_sw_pipe_cfg *r_pipe_cfg = pipe_cfg + 1;
+	bool split_fetch;
 
 	if (drm_rect_width(&pipe_cfg->src_rect) == 0)
 		return 0;
 
-	pipe->sspp = dpu_rm_reserve_sspp(&dpu_kms->rm, global_state, crtc, reqs);
+	/*
+	 * nord4_split_fetch gives each half of the line its own SSPP, as the
+	 * bootloader does (F0271 §2): two VIG pipes, never two rectangles of
+	 * one pipe, so the multirect attempt is skipped.
+	 */
+	split_fetch = nord4_split_fetch &&
+		drm_rect_width(&r_pipe_cfg->src_rect) != 0;
+
+	if (split_fetch)
+		pipe->sspp = dpu_rm_reserve_vig_sspp(&dpu_kms->rm, global_state,
+						     crtc, reqs);
+	else
+		pipe->sspp = dpu_rm_reserve_sspp(&dpu_kms->rm, global_state,
+						 crtc, reqs);
 	if (!pipe->sspp)
 		return -ENODEV;
 	pipe->multirect_index = DPU_SSPP_RECT_SOLO;
@@ -1233,13 +1274,19 @@ static int dpu_plane_assign_resource_in_stage(struct dpu_sw_pipe *pipe,
 	if (drm_rect_width(&r_pipe_cfg->src_rect) == 0)
 		return 0;
 
-	if (dpu_plane_try_multirect_parallel(pipe, pipe_cfg, r_pipe, r_pipe_cfg,
-					      pipe->sspp,
-					      msm_framebuffer_format(plane_state->fb),
-					      dpu_kms->catalog->caps->max_linewidth))
+	if (!split_fetch &&
+	    dpu_plane_try_multirect_parallel(pipe, pipe_cfg, r_pipe, r_pipe_cfg,
+					     pipe->sspp,
+					     msm_framebuffer_format(plane_state->fb),
+					     dpu_kms->catalog->caps->max_linewidth))
 		return 0;
 
-	r_pipe->sspp = dpu_rm_reserve_sspp(&dpu_kms->rm, global_state, crtc, reqs);
+	if (split_fetch)
+		r_pipe->sspp = dpu_rm_reserve_vig_sspp(&dpu_kms->rm, global_state,
+						       crtc, reqs);
+	else
+		r_pipe->sspp = dpu_rm_reserve_sspp(&dpu_kms->rm, global_state,
+						   crtc, reqs);
 	if (!r_pipe->sspp)
 		return -ENODEV;
 	r_pipe->multirect_index = DPU_SSPP_RECT_SOLO;

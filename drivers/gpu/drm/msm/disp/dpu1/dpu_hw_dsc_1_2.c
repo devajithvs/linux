@@ -13,6 +13,7 @@
 #include "dpu_hwio.h"
 #include "dpu_hw_mdss.h"
 #include "dpu_hw_dsc.h"
+#include "../msm_nord4_geo.h"
 
 #define DSC_CMN_MAIN_CNF           0x00
 
@@ -122,9 +123,27 @@ static void dpu_hw_dsc_config_1_2(struct dpu_hw_dsc *hw_dsc,
 	if (mode & DSC_MODE_VIDEO)
 		data |= BIT(9);
 
+	/*
+	 * nord4_dsc_initial_lines: the bootloader's ENC_DF_CTRL (F0271 §3,
+	 * §5.5) carries initial_lines 3 where the computed value is 2, plus
+	 * bit 12.  Only those two fields are taken; the mode bits and the
+	 * output-buffer address stay as this driver computes them.
+	 */
+	if (nord4_dsc_initial_lines >= 0) {
+		data &= ~0xff;
+		data |= nord4_dsc_initial_lines & 0xff;
+		data |= BIT(12);
+	}
+
 	data |= (_dsc_calc_output_buf_max_addr(hw_dsc, num_active_slice_per_enc) << 18);
 
 	DPU_REG_WRITE(hw, sblk->enc.base + ENC_DF_CTRL, data);
+
+	if (nord4_dsc_initial_lines >= 0)
+		pr_info("nord4-geo: dsc%d df_ctrl wrote 0x%08x read 0x%08x initial_lines=%d\n",
+			hw_dsc->idx - DSC_0, data,
+			DPU_REG_READ(hw, sblk->enc.base + ENC_DF_CTRL),
+			nord4_dsc_initial_lines);
 
 	data = (dsc->dsc_version_minor & 0xf) << 28;
 	if (dsc->dsc_version_minor == 0x2) {

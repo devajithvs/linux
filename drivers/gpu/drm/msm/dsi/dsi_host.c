@@ -840,7 +840,21 @@ static void dsi_ctrl_enable(struct msm_dsi_host *msm_host,
 		/* Do not swap RGB colors */
 		data = DSI_CMD_CFG0_RGB_SWAP(SWAP_RGB);
 		data |= DSI_CMD_CFG0_DST_FORMAT(dsi_get_cmd_fmt(mipi_fmt));
+
+		/*
+		 * nord4_dsi_dst_fmt: the bootloader's own command-engine word
+		 * (F0271 §2, §4.1): DST_FORMAT RGB888 (8) and INTERLEAVE_MAX
+		 * 1, i.e. 0x06100008 where ours is 0x00000009.  Bits 25-26
+		 * have no mainline field name; the live word is used whole.
+		 */
+		if (nord4_dsi_dst_fmt)
+			data = 0x06100008;
+
 		dsi_write(msm_host, REG_DSI_CMD_CFG0, data);
+
+		if (nord4_dsi_dst_fmt)
+			pr_info("nord4-geo: dsi cmd_cfg0 wrote 0x%08x read 0x%08x\n",
+				data, dsi_read(msm_host, REG_DSI_CMD_CFG0));
 
 		data = DSI_CMD_CFG1_WR_MEM_START(MIPI_DCS_WRITE_MEMORY_START) |
 			DSI_CMD_CFG1_WR_MEM_CONTINUE(

@@ -9,6 +9,7 @@
 #include "dpu_hw_lm.h"
 #include "dpu_hw_sspp.h"
 #include "dpu_kms.h"
+#include "../msm_nord4_geo.h"
 
 #include <drm/drm_file.h>
 #include <drm/drm_managed.h>
@@ -467,6 +468,19 @@ static void dpu_hw_sspp_setup_rects(struct dpu_sw_pipe *pipe,
 
 	dpu_hw_setup_rects_impl(pipe, cfg, ctx, src_size_off,
 				src_xy_off, out_size_off, out_xy_off);
+
+	/*
+	 * nord4_split_fetch: the bootloader's two-pipe line fetch is proven by
+	 * the SSPP's own registers, read back after they are written (F0271
+	 * §2: VIG0 src x 0, VIG1 src x 620, out x 0, size 620x2772 each).
+	 */
+	if (nord4_split_fetch)
+		pr_info("nord4-geo: split %s src_xy=0x%08x src_size=0x%08x out_xy=0x%08x out_size=0x%08x\n",
+			ctx->cap->name,
+			DPU_REG_READ(&ctx->hw, src_xy_off),
+			DPU_REG_READ(&ctx->hw, src_size_off),
+			DPU_REG_READ(&ctx->hw, out_xy_off),
+			DPU_REG_READ(&ctx->hw, out_size_off));
 }
 
 static void dpu_hw_sspp_setup_sourceaddress(struct dpu_sw_pipe *pipe,

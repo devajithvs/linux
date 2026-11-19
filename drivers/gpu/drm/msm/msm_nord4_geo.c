@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * F0263 follow-up: the four live discriminators of the content-shift question.
+ * F0263/F0271 follow-up: the live discriminators of the content-shift question.
  * All are 0644 and read at the next enable; with their defaults no write is
  * made and the only output is nothing, so the image equals the clean baseline.
  */
@@ -32,3 +32,21 @@ module_param(nord4_dd17, int, 0644);
 MODULE_PARM_DESC(nord4_dd17,
 	"page-1 0x17 value written after 0x29; -1 = write nothing (default -1)");
 EXPORT_SYMBOL_GPL(nord4_dd17);
+
+uint nord4_split_fetch;
+module_param(nord4_split_fetch, uint, 0644);
+MODULE_PARM_DESC(nord4_split_fetch,
+	"1 = split the full-width plane into one VIG pipe per LM (src x 0/620, out x 0); default 0");
+EXPORT_SYMBOL_GPL(nord4_split_fetch);
+
+uint nord4_dsi_dst_fmt;
+module_param(nord4_dsi_dst_fmt, uint, 0644);
+MODULE_PARM_DESC(nord4_dsi_dst_fmt,
+	"1 = DSI_CMD_CFG0 = the bootloader's 0x06100008 (RGB888, interleave 1); default 0");
+EXPORT_SYMBOL_GPL(nord4_dsi_dst_fmt);
+
+int nord4_dsc_initial_lines = -1;
+module_param(nord4_dsc_initial_lines, int, 0644);
+MODULE_PARM_DESC(nord4_dsc_initial_lines,
+	"DSC ENC_DF_CTRL initial_lines and bit 12 (the bootloader's 3); -1 = keep the computed value");
+EXPORT_SYMBOL_GPL(nord4_dsc_initial_lines);
