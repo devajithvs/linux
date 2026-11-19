@@ -25,6 +25,7 @@
 
 #include "dsi.h"
 #include "dsi.xml.h"
+#include "../msm_nord4_debug.h"
 #include "sfpb.xml.h"
 #include "dsi_cfg.h"
 #include "msm_dsc_helper.h"
@@ -1114,6 +1115,17 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 		dsi_write(msm_host, REG_DSI_CMD_MDP_STREAM0_TOTAL,
 			DSI_CMD_MDP_STREAM0_TOTAL_H_TOTAL(hdisplay) |
 			DSI_CMD_MDP_STREAM0_TOTAL_V_TOTAL(mode->vdisplay));
+
+		if (nord4_dump)
+			pr_info("nord4-geo: dsi cmd mode=%ux%u bytes_line=%u wc=%u h_total=%u v_total=%u widebus=%d slice_pkt=%u comp=0x%x comp2=0x%x stream0=0x%x\n",
+				mode->hdisplay, mode->vdisplay,
+				msm_dsc_get_bytes_per_line(msm_host->dsc), wc,
+				dsi_read(msm_host, REG_DSI_CMD_MDP_STREAM0_TOTAL) & 0xffff,
+				mode->vdisplay, wide_bus_enabled,
+				msm_host->dsc_slice_per_pkt,
+				dsi_read(msm_host, REG_DSI_COMMAND_COMPRESSION_MODE_CTRL),
+				dsi_read(msm_host, REG_DSI_COMMAND_COMPRESSION_MODE_CTRL2),
+				dsi_read(msm_host, REG_DSI_CMD_MDP_STREAM0_CTRL));
 	}
 
 }

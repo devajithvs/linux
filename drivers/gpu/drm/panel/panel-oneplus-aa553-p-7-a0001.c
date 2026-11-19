@@ -27,6 +27,8 @@
 
 #include <video/mipi_display.h>
 
+#include "../msm/msm_nord4_debug.h"
+
 struct aa553_panel {
 	struct drm_panel panel;
 	struct mipi_dsi_device *dsi;
@@ -317,8 +319,32 @@ static int aa553_prepare(struct drm_panel *panel)
 	if (ret < 0)
 		goto err_disable;
 
+	if (nord4_dump) {
+		pr_info("nord4-geo: dsc pic=%ux%u slice=%ux%u count=%u bpc=%u bpp=%u chunk=%u\n",
+			ctx->dsc.pic_width, ctx->dsc.pic_height,
+			ctx->dsc.slice_width, ctx->dsc.slice_height,
+			ctx->dsc.slice_count, ctx->dsc.bits_per_component,
+			ctx->dsc.bits_per_pixel, ctx->dsc.slice_chunk_size);
+		pr_info("nord4-geo: dsc xmit=%u dec=%u scale=%u fl_bpg=%u nfl_bpg=%u sl_bpg=%u\n",
+			ctx->dsc.initial_xmit_delay, ctx->dsc.initial_dec_delay,
+			ctx->dsc.initial_scale_value, ctx->dsc.first_line_bpg_offset,
+			ctx->dsc.nfl_bpg_offset, ctx->dsc.slice_bpg_offset);
+	}
+
 	/* the vendor sends the PPS from the frame update, after display-on */
 	aa553_send_pps(ctx, &dsi_ctx);
+
+	if (nord4_dump) {
+		u8 col[4] = { 0 }, page[4] = { 0 };
+		int rc_a, rc_b;
+
+		ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+		rc_a = mipi_dsi_dcs_read(ctx->dsi, 0x2a, col, 4);
+		rc_b = mipi_dsi_dcs_read(ctx->dsi, 0x2b, page, 4);
+		ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+		pr_info("nord4-geo: window written 2a=0000..04d7 2b=0000..0ad3 read 2a ret=%d %*phN 2b ret=%d %*phN\n",
+			rc_a, 4, col, rc_b, 4, page);
+	}
 
 	if (dsi_ctx.accum_err < 0) {
 		ret = dsi_ctx.accum_err;

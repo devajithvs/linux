@@ -29,6 +29,7 @@
 #include "dpu_hw_dspp.h"
 #include "dpu_crtc.h"
 #include "dpu_plane.h"
+#include "msm_nord4_debug.h"
 #include "dpu_encoder.h"
 #include "dpu_vbif.h"
 #include "dpu_core_perf.h"
@@ -389,6 +390,10 @@ static void _dpu_crtc_program_lm_output_roi(struct drm_crtc *crtc)
 		cfg.out_height = drm_rect_height(lm_roi);
 		cfg.right_mixer = lm_idx & 0x1;
 		cfg.flags = 0;
+		if (nord4_dump)
+			pr_info("nord4-geo: lm[%d] roi=%d,%d-%d,%d out=%ux%u right=%d\n",
+				lm_idx, lm_roi->x1, lm_roi->y1, lm_roi->x2, lm_roi->y2,
+				cfg.out_width, cfg.out_height, cfg.right_mixer);
 		hw_lm->ops.setup_mixer_out(hw_lm, &cfg);
 	}
 }

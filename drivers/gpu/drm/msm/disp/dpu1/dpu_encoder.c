@@ -32,6 +32,7 @@
 #include "dpu_formats.h"
 #include "dpu_encoder_phys.h"
 #include "dpu_crtc.h"
+#include "msm_nord4_debug.h"
 #include "dpu_trace.h"
 #include "dpu_core_irq.h"
 #include "disp/msm_disp_snapshot.h"
@@ -2054,6 +2055,14 @@ static void dpu_encoder_prep_dsc(struct dpu_encoder_virt *dpu_enc,
 
 	enc_ip_w = intf_ip_w / num_dsc;
 	initial_lines = dpu_encoder_dsc_initial_line_calc(dsc, enc_ip_w);
+
+	if (nord4_dump)
+		pr_info("nord4-geo: dpu dsc num=%d common=0x%x slices=%d intf_ip_w=%d enc_ip_w=%d initial_lines=%u pic=%ux%u slice=%ux%u chunk=%u split=%d\n",
+			num_dsc, dsc_common_mode, this_frame_slices, intf_ip_w,
+			enc_ip_w, initial_lines, dsc->pic_width, dsc->pic_height,
+			dsc->slice_width, dsc->slice_height,
+			dsc->slice_chunk_size,
+			!!(dsc_common_mode & DSC_MODE_SPLIT_PANEL));
 
 	for (i = 0; i < num_dsc; i++)
 		dpu_encoder_dsc_pipe_cfg(ctl, hw_dsc[i], hw_pp[i],
