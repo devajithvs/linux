@@ -12,6 +12,7 @@
 #include "dpu_hwio.h"
 #include "dpu_hw_mdss.h"
 #include "dpu_hw_dsc.h"
+#include "msm_nord4_dsc.h"
 
 #define DSC_COMMON_MODE                 0x000
 #define DSC_ENC                         0x004
@@ -179,6 +180,11 @@ static void dpu_hw_dsc_bind_pingpong_blk(
 			      hw_dsc->idx - DSC_0);
 
 	DPU_REG_WRITE(c, dsc_ctl_offset, mux_cfg);
+
+	if (nord4_sspp_dump)
+		pr_info("nord4-bind: dsc%d pp=%d ctl=0x%x\n",
+			hw_dsc->idx, pp ? pp - PINGPONG_0 : -1,
+			DPU_REG_READ(c, dsc_ctl_offset));
 }
 
 /**

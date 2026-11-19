@@ -28,6 +28,7 @@
 #include "dpu_hw_ctl.h"
 #include "dpu_hw_dspp.h"
 #include "dpu_crtc.h"
+#include "msm_nord4_dsc.h"
 #include "dpu_plane.h"
 #include "dpu_encoder.h"
 #include "dpu_vbif.h"
@@ -912,6 +913,17 @@ static void dpu_crtc_atomic_begin(struct drm_crtc *crtc,
 
 	DRM_DEBUG_ATOMIC("crtc%d\n", crtc->base.id);
 
+	/*
+	 * HACK 2026-11-19 (F0255 follow-up): the core-clock vote normally runs
+	 * in dpu_crtc_atomic_flush(), after the plane writes; take it here,
+	 * before them, so the SSPP clock is open when the plane is programmed.
+	 */
+	if (nord4_clk_vote_early && crtc->state->enable) {
+		dpu_plane_nord4_clk(crtc, "begin-before-vote");
+		dpu_core_perf_nord4_early(crtc);
+		dpu_plane_nord4_clk(crtc, "begin-after-vote");
+	}
+
 	_dpu_crtc_check_and_setup_lm_bounds(crtc, crtc->state);
 
 	/* encoder will trigger pending mask now */
@@ -982,7 +994,9 @@ static void dpu_crtc_atomic_flush(struct drm_crtc *crtc,
 		return;
 
 	/* update performance setting before crtc kickoff */
+	dpu_plane_nord4_clk(crtc, "flush-before-vote");
 	dpu_core_perf_crtc_update(crtc, 1);
+	dpu_plane_nord4_clk(crtc, "flush-after-vote");
 
 	/*
 	 * Final plane updates: Give each plane a chance to complete all

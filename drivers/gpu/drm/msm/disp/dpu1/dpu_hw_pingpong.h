@@ -118,6 +118,9 @@ static inline struct dpu_hw_pingpong *to_dpu_hw_pingpong(struct dpu_hw_blk *hw)
 	return container_of(hw, struct dpu_hw_pingpong, base);
 }
 
+/* HACK 2026-11-19 (F0255 follow-up): PP tear/sync/DSC state. */
+void dpu_hw_pingpong_nord4_dump(struct dpu_hw_pingpong *pp, const char *tag);
+
 struct dpu_hw_pingpong *dpu_hw_pingpong_init(struct drm_device *dev,
 					     const struct dpu_pingpong_cfg *cfg,
 					     void __iomem *addr,

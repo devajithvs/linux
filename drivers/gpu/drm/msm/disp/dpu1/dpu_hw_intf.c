@@ -322,6 +322,30 @@ static void dpu_hw_intf_bind_pingpong_blk(
 		mux_cfg |= 0xf;
 
 	DPU_REG_WRITE(c, INTF_MUX, mux_cfg);
+
+	if (nord4_sspp_dump)
+		pr_info("nord4-bind: intf%d pp=%d mux=0x%x\n",
+			intf->idx, pp ? pp - PINGPONG_0 : -1,
+			DPU_REG_READ(c, INTF_MUX));
+}
+
+/* HACK 2026-11-19 (F0255 follow-up): the interface's command-mode state at the
+ * flush — timing engine, fetch, mux and the frame/line counters.
+ */
+void dpu_hw_intf_nord4_dump(struct dpu_hw_intf *intf, const char *tag)
+{
+	struct dpu_hw_blk_reg_map *c = &intf->hw;
+
+	pr_info("nord4-intf: %s idx=%d timing_en=0x%x config=0x%x config2=0x%x mux=0x%x status=0x%x frame_count=0x%x line_count=0x%x trig=0x%x",
+		tag, intf->idx,
+		DPU_REG_READ(c, INTF_TIMING_ENGINE_EN),
+		DPU_REG_READ(c, INTF_CONFIG),
+		DPU_REG_READ(c, INTF_CONFIG2),
+		DPU_REG_READ(c, INTF_MUX),
+		DPU_REG_READ(c, INTF_STATUS),
+		DPU_REG_READ(c, INTF_FRAME_COUNT),
+		DPU_REG_READ(c, INTF_LINE_COUNT),
+		DPU_REG_READ(c, INTF_DSI_CMD_MODE_TRIGGER_EN));
 }
 
 static void dpu_hw_intf_get_status(

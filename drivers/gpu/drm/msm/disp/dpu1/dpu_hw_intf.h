@@ -127,6 +127,9 @@ struct dpu_hw_intf {
 	struct dpu_hw_intf_ops ops;
 };
 
+/* HACK 2026-11-19 (F0255 follow-up): INTF state at the flush. */
+void dpu_hw_intf_nord4_dump(struct dpu_hw_intf *intf, const char *tag);
+
 struct dpu_hw_intf *dpu_hw_intf_init(struct drm_device *dev,
 				     const struct dpu_intf_cfg *cfg,
 				     void __iomem *addr,

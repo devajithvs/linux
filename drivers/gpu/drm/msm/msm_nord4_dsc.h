@@ -54,6 +54,8 @@ extern uint nord4_sspp_clk_force;
 extern uint nord4_program_before_flush;
 /* 1 = re-write the VBIF memtypes after the enables, before the flush */
 extern uint nord4_vbif_restore;
+/* 1 = core clock/bus vote before the plane writes */
+extern uint nord4_clk_vote_early;
 extern uint nord4_ctl_reset_on_enable;
 extern uint nord4_aa553_w1_reset_hold_us;
 extern uint nord4_aa553_w2_reset_settle_us;

@@ -10,6 +10,7 @@
 #include "dpu_hwio.h"
 #include "dpu_hw_catalog.h"
 #include "dpu_hw_pingpong.h"
+#include "msm_nord4_dsc.h"
 #include "dpu_kms.h"
 #include "dpu_trace.h"
 
@@ -292,6 +293,25 @@ static int dpu_hw_pp_setup_dsc(struct dpu_hw_pingpong *pp)
  * @mdss_rev: dpu core's major and minor versions
  * Return: Error code or allocated dpu_hw_pingpong context
  */
+/* HACK 2026-11-19 (F0255 follow-up): the ping-pong's tear-check/sync/DSC
+ * state — the block that has to signal pp_done.
+ */
+void dpu_hw_pingpong_nord4_dump(struct dpu_hw_pingpong *pp, const char *tag)
+{
+	struct dpu_hw_blk_reg_map *c = &pp->hw;
+
+	pr_info("nord4-pp: %s idx=%d tear_en=0x%x sync_vsync=0x%x sync_height=0x%x sync_thresh=0x%x rdptr_irq=0x%x wrcount=0x%x autorefresh=0x%x dsc_mode=0x%x\n",
+		tag, pp->idx,
+		DPU_REG_READ(c, PP_TEAR_CHECK_EN),
+		DPU_REG_READ(c, PP_SYNC_CONFIG_VSYNC),
+		DPU_REG_READ(c, PP_SYNC_CONFIG_HEIGHT),
+		DPU_REG_READ(c, PP_SYNC_THRESH),
+		DPU_REG_READ(c, PP_RD_PTR_IRQ),
+		DPU_REG_READ(c, PP_SYNC_WRCOUNT),
+		DPU_REG_READ(c, PP_AUTOREFRESH_CONFIG),
+		DPU_REG_READ(c, PP_DSC_MODE));
+}
+
 struct dpu_hw_pingpong *dpu_hw_pingpong_init(struct drm_device *dev,
 					     const struct dpu_pingpong_cfg *cfg,
 					     void __iomem *addr,

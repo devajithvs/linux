@@ -100,6 +100,13 @@ static void dpu_encoder_phys_cmd_pp_tx_done_irq(void *arg)
 		return;
 
 	DPU_ATRACE_BEGIN("pp_done_irq");
+
+	/* HACK 2026-11-19 (F0255 follow-up): the frame-completion IRQ. */
+	if (nord4_sspp_dump)
+		pr_info("nord4-irq: pp_done pp=%d pending=%d\n",
+			phys_enc->hw_pp->idx - PINGPONG_0,
+			atomic_read(&phys_enc->pending_kickoff_cnt));
+
 	/* notify all synchronous clients first, then asynchronous clients */
 	dpu_encoder_frame_done_callback(phys_enc->parent, phys_enc, event);
 
@@ -136,6 +143,10 @@ static void dpu_encoder_phys_cmd_ctl_start_irq(void *arg)
 	struct dpu_encoder_phys *phys_enc = arg;
 
 	DPU_ATRACE_BEGIN("ctl_start_irq");
+
+	if (nord4_sspp_dump)
+		pr_info("nord4-irq: ctl_start intf=%d\n",
+			phys_enc->hw_intf ? phys_enc->hw_intf->idx : -1);
 
 	atomic_add_unless(&phys_enc->pending_ctlstart_cnt, -1, 0);
 

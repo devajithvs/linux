@@ -1619,6 +1619,12 @@ void dpu_encoder_frame_done_callback(
 			| DPU_ENCODER_FRAME_EVENT_ERROR
 			| DPU_ENCODER_FRAME_EVENT_PANEL_DEAD)) {
 
+		/* HACK 2026-11-19 (F0255 follow-up): frame-done delivery. */
+		if (nord4_sspp_dump)
+			pr_info("nord4-irq: frame_done enc=%d event=0x%x busy=0x%lx\n",
+				drm_enc->base.id, event,
+				dpu_enc->frame_busy_mask[0]);
+
 		if (!dpu_enc->frame_busy_mask[0]) {
 			/**
 			 * suppress frame_done without waiter,
@@ -1709,11 +1715,20 @@ static void _dpu_encoder_trigger_flush(struct drm_encoder *drm_enc,
 
 	ctl->ops.trigger_flush(ctl);
 
-	/* HACK 2026-11-19 (F0250): the moment the DPU is told to fetch. */
+	/* HACK 2026-11-19 (F0250/F0255): the moment the DPU is told to fetch. */
 	if (nord4_sspp_dump) {
+		struct dpu_encoder_virt *v = to_dpu_encoder_virt(drm_enc);
+		int i;
+
 		dpu_hw_ctl_nord4_dump(ctl, "flush");
 		if (phys->dpu_kms)
 			dpu_plane_nord4_dump(phys->dpu_kms, "flush");
+		if (phys->hw_intf)
+			dpu_hw_intf_nord4_dump(phys->hw_intf, "flush");
+		for (i = 0; i < MAX_CHANNELS_PER_ENC; i++) {
+			if (v->hw_pp[i])
+				dpu_hw_pingpong_nord4_dump(v->hw_pp[i], "flush");
+		}
 	}
 
 	if (ctl->ops.get_pending_flush)
