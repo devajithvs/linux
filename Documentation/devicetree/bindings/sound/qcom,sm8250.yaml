@@ -91,6 +91,22 @@ patternProperties:
           sound-dai:
             maxItems: 1
 
+          dai-format:
+            description:
+              The DAI format on the wire, as seen from this end of the link.
+              When present it is handed to the CPU DAI and, flipped, to the
+              codec DAIs; when absent the link keeps the format its DAIs
+              default to.
+            enum: [ i2s, right_j, left_j, dsp_a, dsp_b, ac97, pdm, msb, lsb ]
+
+          bitclock-master:
+            $ref: /schemas/types.yaml#/definitions/flag
+            description: This end of the link drives the bit clock.
+
+          frame-master:
+            $ref: /schemas/types.yaml#/definitions/flag
+            description: This end of the link drives the frame clock.
+
       platform:
         description: Holds subnode which indicates platform dai.
         type: object
