@@ -1468,3 +1468,29 @@
 		#sound-dai-cells = <0>;
 	};
 };
+
+/*
+ * The NFC controller: NXP SN220U, PN560-class, at 0x28 on the qupv3 SE9 bus
+ * (i2c@884000, IRQ 583, 1 MHz). The shipped DTBO adds it to qupv3_se9_i2c as
+ * qcom,sn-nci with the interrupt on GPIO 61, enable on GPIO 114 and clock
+ * request on GPIO 115 (dtbo_b_0.dts fragment@73, the same in both slots). The
+ * shipped base DTB's nfc_int_active/nfc_enable_active states leave GPIO 61 an
+ * input with a pull-down and GPIO 114/115 as plain GPIOs, which is the state
+ * ABL hands over; the nxp,nci binding has no clock-request property, so GPIO
+ * 115 is left alone. The supply is L5B at 1.2 V, held on by the UFS reset
+ * pull-up comment above. docs/plans/nfc.md, F0291.
+ */
+&i2c9 {
+	status = "okay";
+	clock-frequency = <1000000>;
+
+	nfc@28 {
+		compatible = "nxp,nxp-nci-i2c";
+		reg = <0x28>;
+
+		interrupt-parent = <&tlmm>;
+		interrupts = <61 IRQ_TYPE_LEVEL_HIGH>;
+
+		enable-gpios = <&tlmm 114 GPIO_ACTIVE_HIGH>;
+	};
+};
