@@ -19,6 +19,7 @@
 
 #include <drm/display/drm_dsc.h>
 #include <drm/display/drm_dsc_helper.h>
+
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_modes.h>
 #include <drm/drm_panel.h>
@@ -58,12 +59,21 @@ static inline struct aa553_panel *to_aa553_panel(struct drm_panel *panel)
  */
 static void aa553_reset(struct aa553_panel *ctx)
 {
+	/*
+	 * The vendor's qcom,mdss-dsi-reset-sequence is
+	 * <1 2>, <0 5>, <1 25> (dsi-panel-AA553-P-7-A0001-dsc-cmd.dtsi:25)
+	 * on an ACTIVE_HIGH gpio: release 2 ms, assert 5 ms, release 25 ms.
+	 * Our DT declares tlmm 79 GPIO_ACTIVE_LOW, so the same physical order
+	 * is 0, 1, 0.  Every sleep doubled; writing the vendor's numeric
+	 * levels here inverted it and held the DDIC in reset (measured:
+	 * on ret=-110, reads -110/-22).
+	 */
 	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
-	usleep_range(2000, 3000);
+	usleep_range(4000, 5000);
 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
-	usleep_range(5000, 6000);
+	usleep_range(10000, 11000);
 	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
-	usleep_range(25000, 26000);
+	usleep_range(50000, 51000);
 }
 
 /*
@@ -72,6 +82,23 @@ static void aa553_reset(struct aa553_panel *ctx)
  * The downstream table's 0x91 short write is the panel's own DSC
  * configuration; the VESA PPS itself is sent by the driver in prepare().
  */
+/*
+ * The VESA PPS.  The standard DCS 0x07 compression-mode write is not sent:
+ * the vendor's table never contains it and the DDIC's own status byte (0x03)
+ * reads its error value when it is sent (F0160 §4, F0168).
+ */
+static void aa553_send_pps(struct aa553_panel *ctx,
+			   struct mipi_dsi_multi_context *dsi_ctx)
+{
+	struct drm_dsc_picture_parameter_set pps;
+
+	drm_dsc_pps_payload_pack(&pps, &ctx->dsc);
+	mipi_dsi_picture_parameter_set_multi(dsi_ctx, &pps);
+
+	/* vendor PPS-to-display-on 28 ms, doubled */
+	mipi_dsi_msleep(dsi_ctx, 56);
+}
+
 static int aa553_on(struct aa553_panel *ctx)
 {
 	struct mipi_dsi_device *dsi = ctx->dsi;
@@ -180,6 +207,12 @@ static int aa553_on(struct aa553_panel *ctx)
 				     0x00, 0x58, 0x00, 0x20, 0x00, 0x20, 0x10, 0x00, 0x58, 0x00,
 				     0x20, 0x03, 0xd4, 0x10, 0x00, 0x58, 0x00, 0x20, 0x0b, 0x38,
 				     0x10);
+	/*
+	 * The vendor's table selects page 0 again right before the decoder
+	 * tables (dsi-panel-AA553-P-7-A0001-dsc-cmd.dtsi:76); without it the
+	 * first 0xb4 lands in the page the 0xba write left.
+	 */
+	aa553_switch_page(&dsi_ctx, 0x00);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb4,
 				     0x00, 0x00, 0x00, 0xc0, 0x00, 0xdc, 0x00, 0xdc, 0x01, 0x10,
 				     0x01, 0x10, 0x01, 0xa0, 0x01, 0xa0, 0x02, 0xb8, 0x02, 0xb8,
@@ -202,7 +235,8 @@ static int aa553_on(struct aa553_panel *ctx)
 				     0x15, 0xe0, 0x15, 0xe0, 0x15, 0xe0);
 
 	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
-	mipi_dsi_msleep(&dsi_ctx, 120);
+	/* vendor 0x78 = 120 ms after sleep-out, doubled */
+	mipi_dsi_msleep(&dsi_ctx, 240);
 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
 
 	return dsi_ctx.accum_err;
@@ -237,41 +271,54 @@ static int aa553_off(struct aa553_panel *ctx)
 static int aa553_prepare(struct drm_panel *panel)
 {
 	struct aa553_panel *ctx = to_aa553_panel(panel);
-	struct drm_dsc_picture_parameter_set pps;
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 	int ret;
+
+	/*
+	 * Root cause (F0239, F0244): a first mode set after a warm boot lit
+	 * only 1/6 because the bootloader leaves both rails on and the panel
+	 * running, so a plain regulator_enable() is a no-op and the DDIC never
+	 * sees a real power cycle; a hot reset of a running panel is the race.
+	 * Force the vendor's power-off first: reset asserted, vci off, vddio
+	 * off, 200 ms, and give every vendor wait double its value.
+	 */
+	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
+	regulator_force_disable(ctx->supplies[1].consumer);
+	regulator_force_disable(ctx->supplies[0].consumer);
+	usleep_range(200000, 210000);
 
 	ret = regulator_enable(ctx->supplies[0].consumer);
 	if (ret < 0)
 		return ret;
 
-	usleep_range(2000, 3000);
+	/* vendor 2 ms post-on, doubled */
+	usleep_range(4000, 5000);
 
 	/*
 	 * The vci entry also asks for a 1 ms pre-on sleep
 	 * (audi-23803-display-cliffs-overlay.dtsi:39), so the rail comes up
 	 * 3 ms after vddio, not 2 ms.
 	 */
-	usleep_range(1000, 2000);
+	/* vendor 1 ms pre-on, doubled */
+	usleep_range(2000, 3000);
 
 	ret = regulator_enable(ctx->supplies[1].consumer);
 	if (ret < 0)
 		goto err_disable_vddio;
 
-	usleep_range(15000, 16000);
+	/* vendor 15 ms after vci, doubled */
+	usleep_range(30000, 31000);
 
 	aa553_reset(ctx);
-	usleep_range(1000, 2000);
+	/* vendor init-delay-us 1000, doubled */
+	usleep_range(2000, 3000);
 
 	ret = aa553_on(ctx);
 	if (ret < 0)
 		goto err_disable;
 
-	drm_dsc_pps_payload_pack(&pps, &ctx->dsc);
-	mipi_dsi_picture_parameter_set_multi(&dsi_ctx, &pps);
-	mipi_dsi_compression_mode_ext_multi(&dsi_ctx, true,
-					    MIPI_DSI_COMPRESSION_DSC, 0);
-	mipi_dsi_msleep(&dsi_ctx, 28);
+	/* the vendor sends the PPS from the frame update, after display-on */
+	aa553_send_pps(ctx, &dsi_ctx);
 
 	if (dsi_ctx.accum_err < 0) {
 		ret = dsi_ctx.accum_err;
@@ -335,8 +382,32 @@ static int aa553_get_modes(struct drm_panel *panel, struct drm_connector *connec
 	return drm_connector_helper_get_modes_fixed(connector, &aa553_mode);
 }
 
+/*
+ * A panel driver is what turns the backlight on: drm_panel_enable() does not.
+ * Without this the level is written only when userspace writes the sysfs file,
+ * which at boot happens while the panel is unprepared and is skipped, so the
+ * DDIC keeps whatever brightness its own reset left.
+ */
+static int aa553_enable(struct drm_panel *panel)
+{
+	struct aa553_panel *ctx = to_aa553_panel(panel);
+
+	return backlight_enable(ctx->panel.backlight);
+}
+
+static int aa553_disable(struct drm_panel *panel)
+{
+	struct aa553_panel *ctx = to_aa553_panel(panel);
+
+	backlight_disable(ctx->panel.backlight);
+
+	return 0;
+}
+
 static const struct drm_panel_funcs aa553_panel_funcs = {
 	.prepare = aa553_prepare,
+	.enable = aa553_enable,
+	.disable = aa553_disable,
 	.unprepare = aa553_unprepare,
 	.get_modes = aa553_get_modes,
 };
@@ -344,25 +415,29 @@ static const struct drm_panel_funcs aa553_panel_funcs = {
 /*
  * The downstream panel is bl_ctrl_dcs with qcom,mdss-dsi-bl-inverted-dbv and
  * a 0..3999 12-bit range (dsi-panel-AA553-P-7-A0001-dsc-cmd.dtsi:866-869).
+ *
+ * "inverted dbv" is the DDIC's byte order, not an inverted scale: the vendor
+ * swaps the 16-bit level and then sends it with the little-endian DCS helper
+ * (oplus/oplus_display_panel_feature.c:620-651,
+ * mipi_dsi_dcs_set_display_brightness()), so the panel receives the level
+ * big-endian - which is what the _large() helper sends.  A complement
+ * (max - level) would put the top of the scale at DBV 0.
  */
 static int aa553_bl_update_status(struct backlight_device *bl)
 {
 	struct aa553_panel *ctx = bl_get_data(bl);
-	u16 brightness;
 
 	/*
 	 * Outside prepare()/unprepare() the rails are down and the panel does
 	 * not answer: a brightness write would sit out the DSI timeout and
 	 * fail. systemd-backlight does exactly that at boot and at shutdown,
-	 * so skip it; drm_panel_enable() calls backlight_enable() after
-	 * prepare() and the level is applied there.
+	 * so skip it; aa553_enable() applies the level once the panel is up.
 	 */
 	if (!ctx->prepared)
 		return 0;
 
-	brightness = bl->props.max_brightness - backlight_get_brightness(bl);
-
-	return mipi_dsi_dcs_set_display_brightness_large(ctx->dsi, brightness);
+	return mipi_dsi_dcs_set_display_brightness_large(ctx->dsi,
+			backlight_get_brightness(bl));
 }
 
 static const struct backlight_ops aa553_bl_ops = {
@@ -455,11 +530,18 @@ static void aa553_remove(struct mipi_dsi_device *dsi)
 	struct aa553_panel *ctx = mipi_dsi_get_drvdata(dsi);
 	int ret;
 
+	/*
+	 * The panel goes first: detaching the DSI device while the DRM panel
+	 * and its bridge still exist leaves the bridge pointing at a device
+	 * whose host is being torn down (mipi_dsi_detach then fails with
+	 * -EINVAL), and the teardown after that can hang.  Mainline panel
+	 * drivers remove the panel, then detach.
+	 */
+	drm_panel_remove(&ctx->panel);
+
 	ret = mipi_dsi_detach(dsi);
 	if (ret < 0)
 		dev_err(&dsi->dev, "Failed to detach from DSI host: %d\n", ret);
-
-	drm_panel_remove(&ctx->panel);
 }
 
 static const struct of_device_id aa553_of_match[] = {
