@@ -373,6 +373,10 @@ static const struct of_device_id iris_dt_match[] = {
 		.data = &sc7280_data,
 	},
 	{
+		.compatible = "qcom,sm7675-iris",
+		.data = &sm7675_data,
+	},
+	{
 		.compatible = "qcom,sm8250-venus",
 		.data = &sm8250_data,
 	},
