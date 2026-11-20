@@ -2,6 +2,7 @@
 // Copyright (c) 2021, Linaro Limited
 
 #include <dt-bindings/sound/qcom,q6dsp-lpass-ports.h>
+#include <linux/clk.h>
 #include <linux/err.h>
 #include <linux/init.h>
 #include <linux/module.h>
@@ -22,6 +23,8 @@ struct q6apm_lpass_dai_data {
 	struct q6apm_graph *graph[APM_PORT_MAX];
 	bool is_port_started[APM_PORT_MAX];
 	struct audioreach_module_config module_config[APM_PORT_MAX];
+	/* LPASS interface clock of the secondary MI2S, voted through q6prm */
+	struct clk *sec_mi2s_ibit;
 };
 
 static int q6dma_set_channel_map(struct snd_soc_dai *dai,
@@ -137,6 +140,56 @@ static int q6dma_hw_params(struct snd_pcm_substream *substream,
 	cfg->sample_rate = params_rate(params);
 	cfg->num_channels = channels;
 	audioreach_set_default_channel_mapping(cfg->channel_map, channels);
+
+	return 0;
+}
+
+/*
+ * The LPASS PRM owns the MI2S bit clock; the DSP's I2S endpoint does not set
+ * its frequency. Without a vote the endpoint has no bit clock to shift frames
+ * out with, so it never finishes a buffer and the host's hw_ptr stays 0
+ * (F0188's stall). The vendor votes the same clock from its machine driver's
+ * hw_params (audio-kernel asoc/msm_common.c, get_mi2s_clk_id() and
+ * msm_common_snd_hw_params()), with rate * channels * slot width.
+ */
+static int q6i2s_ibit_enable(struct snd_soc_dai *dai, unsigned int rate,
+			     unsigned int channels, unsigned int bit_width)
+{
+	struct q6apm_lpass_dai_data *dai_data = dev_get_drvdata(dai->dev);
+	int ret;
+
+	if (dai->id != SECONDARY_MI2S_RX || !dai_data->sec_mi2s_ibit)
+		return 0;
+
+	/* A 24-bit sample is carried in a 32-bit slot */
+	ret = clk_set_rate(dai_data->sec_mi2s_ibit,
+			   rate * channels * (bit_width > 16 ? 32 : 16));
+	if (ret)
+		return ret;
+
+	return clk_prepare_enable(dai_data->sec_mi2s_ibit);
+}
+
+static int q6i2s_hw_params(struct snd_pcm_substream *substream,
+			   struct snd_pcm_hw_params *params, struct snd_soc_dai *dai)
+{
+	int channels = hw_param_interval_c(params, SNDRV_PCM_HW_PARAM_CHANNELS)->max;
+	int ret;
+
+	ret = q6dma_hw_params(substream, params, dai);
+	if (ret)
+		return ret;
+
+	return q6i2s_ibit_enable(dai, params_rate(params), channels,
+				 params_width(params));
+}
+
+static int q6i2s_hw_free(struct snd_pcm_substream *substream, struct snd_soc_dai *dai)
+{
+	struct q6apm_lpass_dai_data *dai_data = dev_get_drvdata(dai->dev);
+
+	if (dai->id == SECONDARY_MI2S_RX && dai_data->sec_mi2s_ibit)
+		clk_disable_unprepare(dai_data->sec_mi2s_ibit);
 
 	return 0;
 }
@@ -275,7 +328,8 @@ static const struct snd_soc_dai_ops q6i2s_ops = {
 	.startup	= q6apm_lpass_dai_startup,
 	.shutdown	= q6apm_lpass_dai_shutdown,
 	.set_channel_map  = q6dma_set_channel_map,
-	.hw_params        = q6dma_hw_params,
+	.hw_params        = q6i2s_hw_params,
+	.hw_free	  = q6i2s_hw_free,
 	.set_fmt	= q6i2s_set_fmt,
 	.trigger	= q6apm_lpass_dai_trigger,
 };
@@ -308,6 +362,11 @@ static int q6apm_lpass_dai_dev_probe(struct platform_device *pdev)
 	dai_data = devm_kzalloc(dev, sizeof(*dai_data), GFP_KERNEL);
 	if (!dai_data)
 		return -ENOMEM;
+
+	dai_data->sec_mi2s_ibit = devm_clk_get_optional(dev, "sec-mi2s-ibit");
+	if (IS_ERR(dai_data->sec_mi2s_ibit))
+		return dev_err_probe(dev, PTR_ERR(dai_data->sec_mi2s_ibit),
+				     "unable to get the secondary MI2S bit clock\n");
 
 	dev_set_drvdata(dev, dai_data);
 
