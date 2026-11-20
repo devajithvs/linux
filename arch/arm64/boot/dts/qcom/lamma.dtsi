@@ -74,3 +74,12 @@
 &llcc {
     compatible = "qcom,lamma-llcc";
 };
+
+/*
+ * Lamma's video core is a two-pipe IRIS33 running the vpu30_2v firmware; the
+ * node's resources are the ones palawan.dtsi declares.
+ */
+&iris {
+	compatible = "qcom,sm7675-iris";
+	firmware-name = "qcom/vpu/vpu30_2v.mbn";
+};
