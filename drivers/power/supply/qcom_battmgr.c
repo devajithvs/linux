@@ -35,6 +35,9 @@ enum qcom_battmgr_variant {
 #define NOTIF_BAT_PROPERTY		0x30
 #define NOTIF_USB_PROPERTY		0x32
 #define NOTIF_WLS_PROPERTY		0x34
+/* OPlus-only: the charger firmware announces the port's OTG state with these. */
+#define NOTIF_USB_OTG_ENABLE		0x50
+#define NOTIF_USB_OTG_DISABLE		0x51
 #define NOTIF_BAT_STATUS		0x80
 #define NOTIF_BAT_INFO			0x81
 #define NOTIF_BAT_CHARGING_STATE	0x83
@@ -87,6 +90,9 @@ enum qcom_battmgr_variant {
 #define USB_ADAP_TYPE			7
 #define USB_MOISTURE_DET_EN		8
 #define USB_MOISTURE_DET_STS		9
+/* OPlus-only extension, past the standard ids. */
+#define USB_OTG_AP_ENABLE		17
+#define USB_OTG_VBUS_REGULATOR_ENABLE	24
 
 #define BATTMGR_WLS_PROPERTY_GET	0x34
 #define BATTMGR_WLS_PROPERTY_SET	0x35
@@ -335,6 +341,10 @@ struct qcom_battmgr {
 	struct qcom_battmgr_wireless wireless;
 
 	struct work_struct enable_work;
+	struct work_struct otg_vbus_work;
+
+	/* The firmware's last OTG announcement, applied by @otg_vbus_work. */
+	bool otg_vbus;
 
 	/*
 	 * @lock is used to prevent concurrent power supply requests to the
@@ -1326,6 +1336,15 @@ static void qcom_battmgr_notification(struct qcom_battmgr *battmgr,
 	case NOTIF_WLS_PROPERTY:
 		power_supply_changed(battmgr->wls_psy);
 		break;
+	case NOTIF_USB_OTG_ENABLE:
+	case NOTIF_USB_OTG_DISABLE:
+		if (battmgr->variant != QCOM_BATTMGR_SM8550_OPLUS) {
+			dev_err(battmgr->dev, "unknown notification: %#x\n", notification);
+			break;
+		}
+		battmgr->otg_vbus = notification == NOTIF_USB_OTG_ENABLE;
+		schedule_work(&battmgr->otg_vbus_work);
+		break;
 	default:
 		dev_err(battmgr->dev, "unknown notification: %#x\n", notification);
 		break;
@@ -1643,6 +1662,19 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
 			break;
 		}
 		break;
+	case BATTMGR_USB_PROPERTY_SET:
+		if (payload_len != sizeof(resp->intval)) {
+			dev_warn(battmgr->dev,
+				 "invalid payload length for %#x request: %zd\n",
+				 le32_to_cpu(resp->intval.property), payload_len);
+			battmgr->error = -ENODATA;
+			return;
+		}
+
+		battmgr->error = le32_to_cpu(resp->intval.result);
+		if (battmgr->error)
+			goto out_complete;
+		break;
 	case BATTMGR_WLS_PROPERTY_GET:
 		property = le32_to_cpu(resp->intval.property);
 		if (payload_len != sizeof(resp->intval)) {
@@ -1718,6 +1750,39 @@ static void qcom_battmgr_callback(const void *data, size_t len, void *priv)
 		qcom_battmgr_sm8350_callback(battmgr, data, len);
 }
 
+static void qcom_battmgr_otg_vbus_worker(struct work_struct *work)
+{
+	struct qcom_battmgr *battmgr = container_of(work, struct qcom_battmgr,
+						    otg_vbus_work);
+	bool enable = battmgr->otg_vbus;
+	int ret;
+
+	/*
+	 * The port's 5 V is the charger firmware's regulator and nothing in the
+	 * UCSI path touches it: without this request the firmware leaves VBUS
+	 * off in the source role and an attached device never sees power.
+	 */
+	mutex_lock(&battmgr->lock);
+	ret = qcom_battmgr_request_property(battmgr, BATTMGR_USB_PROPERTY_SET,
+					    USB_OTG_VBUS_REGULATOR_ENABLE, enable);
+	if (!ret && enable)
+		ret = qcom_battmgr_request_property(battmgr, BATTMGR_USB_PROPERTY_GET,
+						    USB_VOLT_NOW, 0);
+	mutex_unlock(&battmgr->lock);
+
+	if (ret) {
+		dev_warn(battmgr->dev, "failed to turn OTG VBUS %s: %d\n",
+			 enable ? "on" : "off", ret);
+		return;
+	}
+
+	if (enable)
+		dev_info(battmgr->dev, "OTG VBUS on, port voltage %u mV\n",
+			 battmgr->usb.voltage_now);
+	else
+		dev_info(battmgr->dev, "OTG VBUS off\n");
+}
+
 static void qcom_battmgr_enable_worker(struct work_struct *work)
 {
 	struct qcom_battmgr *battmgr = container_of(work, struct qcom_battmgr, enable_work);
@@ -1731,6 +1796,21 @@ static void qcom_battmgr_enable_worker(struct work_struct *work)
 	ret = qcom_battmgr_request(battmgr, &req, sizeof(req));
 	if (ret)
 		dev_err(battmgr->dev, "failed to request power notifications\n");
+
+	if (battmgr->variant != QCOM_BATTMGR_SM8550_OPLUS)
+		return;
+
+	/*
+	 * Stock's charger driver tells this firmware at boot that the AP drives
+	 * OTG (oplus_otg_init_status_func); without it the firmware does not
+	 * enter the OTG path for an attached device.
+	 */
+	mutex_lock(&battmgr->lock);
+	ret = qcom_battmgr_request_property(battmgr, BATTMGR_USB_PROPERTY_SET,
+					    USB_OTG_AP_ENABLE, 1);
+	mutex_unlock(&battmgr->lock);
+	if (ret)
+		dev_warn(battmgr->dev, "failed to enable the AP OTG path: %d\n", ret);
 }
 
 static void qcom_battmgr_pdr_notify(void *priv, int state)
@@ -1785,6 +1865,7 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
 	psy_cfg_supply.num_supplicants = 1;
 
 	INIT_WORK(&battmgr->enable_work, qcom_battmgr_enable_worker);
+	INIT_WORK(&battmgr->otg_vbus_work, qcom_battmgr_otg_vbus_worker);
 	mutex_init(&battmgr->lock);
 	init_completion(&battmgr->ack);
 
