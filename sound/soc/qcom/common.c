@@ -114,6 +114,22 @@ int qcom_snd_parse_of(struct snd_soc_card *card)
 			return ret;
 		}
 
+		/*
+		 * The DAI format is optional and, when given, it is declared on
+		 * the CPU end: "bitclock-master"/"frame-master" on that node
+		 * name the end that drives the clocks. ASoC carries dai_fmt from
+		 * the codec's side, so the clock-provider bits are flipped here.
+		 * Leaving all three out keeps dai_fmt 0, which is what every
+		 * other link on these cards has always had.
+		 */
+		if (of_property_present(cpu, "dai-format") ||
+		    of_property_present(cpu, "bitclock-master") ||
+		    of_property_present(cpu, "frame-master"))
+			link->dai_fmt =
+				snd_soc_daifmt_parse_format(cpu, NULL) |
+				snd_soc_daifmt_clock_provider_flipped(
+					snd_soc_daifmt_parse_clock_provider_as_flag(cpu, NULL));
+
 		link->id = args.args[0];
 
 		if (link->id >= LPASS_MAX_PORT) {
