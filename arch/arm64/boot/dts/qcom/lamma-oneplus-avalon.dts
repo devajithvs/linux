@@ -210,12 +210,23 @@
 		 * oplus,speaker-i2s-id = <1> is the secondary MI2S, whose
 		 * SCK/WS/SD0/SD1 are the TLMM i2s1 states above
 		 * (oplus/avalon-24211-audio-cliffs-overlay.dtsi:113-148).
+		 *
+		 * The AP drives BCLK and WS and the amplifiers are consumers
+		 * (sound/soc/qcom/qdsp6/audioreach.c:1008-1016 turns the CPU's
+		 * provider role into CONFIG_I2S_WS_SRC_INTERNAL; with the
+		 * format left out the DSP samples WS instead of driving it).
+		 * SD1 is pulled down and unused on this board
+		 * (oplus/avalon-24211-audio-cliffs-overlay.dtsi:139-144), so
+		 * both amps take the two channels of SD0.
 		 */
 		speaker-dai-link {
 			link-name = "Speaker Playback";
 
 			cpu {
 				sound-dai = <&q6apmbedai SECONDARY_MI2S_RX>;
+				dai-format = "i2s";
+				bitclock-master;
+				frame-master;
 			};
 
 			codec {
