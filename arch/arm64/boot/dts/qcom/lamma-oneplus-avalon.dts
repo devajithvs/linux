@@ -191,6 +191,26 @@
 			    <&i2s1_sd0_active>, <&i2s1_sd1_active>;
 		pinctrl-names = "default";
 
+		/*
+		 * The board's microphones are the WCD9370's analog ones: the
+		 * bottom and top mics land on AMIC1/AMIC2 through MIC BIAS1/2
+		 * (the vendor's capture backend is CODEC_DMA-LPAIF_RXTX-TX-3
+		 * for both, odm/etc/resourcemanager.xml in the stock odm image),
+		 * and the stock routing joins the codec's third input to MIC
+		 * BIAS3 as well.  The last two routes join the codec's ADC
+		 * outputs to the TX macro's SoundWire inputs: the codec's TX
+		 * port mapping puts ADC1 and ADC2 on master port 2
+		 * (qcom,tx-port-mapping = <2 2 3 4>, the same table the SM8550
+		 * WCD9385 boards use), and master port 2 carries TX SWR_INPUT0..3
+		 * (lpass-tx-macro.c's v9_2 widget set, which the SM8550 macro
+		 * data selects).
+		 */
+		audio-routing = "AMIC1", "MIC BIAS1",
+				"AMIC2", "MIC BIAS2",
+				"AMIC3", "MIC BIAS3",
+				"TX SWR_INPUT0", "ADC1_OUTPUT",
+				"TX SWR_INPUT1", "ADC2_OUTPUT";
+
 		wcd-playback-dai-link {
 			link-name = "WCD Playback";
 
@@ -201,6 +221,31 @@
 			codec {
 				sound-dai = <&wcd937x 0>, <&swr1 0>,
 					    <&lpass_rxmacro 0>;
+			};
+
+			platform {
+				sound-dai = <&q6apm>;
+			};
+		};
+
+		/*
+		 * Capture: the WCD9370's ADCs leave the codec on the TX
+		 * SoundWire slave (swr2, the TX macro's master) and reach the
+		 * LPASS through the RXTX codec DMA's TX3 port.  The same link
+		 * shape as qcm6490-idp.dts's wcd-capture-dai-link, whose codec
+		 * is this one; the codec's first DAI is the RX, the second the
+		 * TX (wcd937x.c's wcd937x_dais[]).
+		 */
+		wcd-capture-dai-link {
+			link-name = "WCD Capture";
+
+			cpu {
+				sound-dai = <&q6apmbedai TX_CODEC_DMA_TX_3>;
+			};
+
+			codec {
+				sound-dai = <&wcd937x 1>, <&swr2 0>,
+					    <&lpass_txmacro 0>;
 			};
 
 			platform {
@@ -230,6 +275,19 @@
 			};
 		};
 	};
+};
+
+/*
+ * The secondary MI2S bit clock is owned by the LPASS PRM, not by the DSP's
+ * I2S endpoint: the DAI votes its frequency through q6prm at hw_params, as
+ * the vendor's machine driver does (audio-kernel asoc/msm_common.c, the
+ * CLOCK_ID_SEC_MI2S_IBIT branch of msm_common_snd_hw_params()).  Without the
+ * vote the endpoint has no bit clock, so it never returns a buffer and the
+ * playback hw_ptr stays 0.
+ */
+&q6apmbedai {
+	clocks = <&q6prmcc LPASS_CLK_ID_SEC_MI2S_IBIT LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
+	clock-names = "sec-mi2s-ibit";
 };
 
 &apps_rsc {
