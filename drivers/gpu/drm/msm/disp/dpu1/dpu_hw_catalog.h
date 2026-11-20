@@ -277,6 +277,9 @@ struct dpu_rotation_cfg {
  * @pixel_ram_size     size of latency hiding and de-tiling buffer in bytes
  * @max_hdeci_exp      max horizontal decimation supported (max is 2^value)
  * @max_vdeci_exp      max vertical decimation supported (max is 2^value)
+ * @split_fetch_per_lm a plane that covers the whole mode is fetched by one
+ *                     SSPP per mixer; a single pipe across the mixer pair
+ *                     writes a shifted image on this platform
  */
 struct dpu_caps {
 	u32 max_mixer_width;
@@ -290,6 +293,7 @@ struct dpu_caps {
 	u32 pixel_ram_size;
 	u32 max_hdeci_exp;
 	u32 max_vdeci_exp;
+	bool split_fetch_per_lm;
 };
 
 /**

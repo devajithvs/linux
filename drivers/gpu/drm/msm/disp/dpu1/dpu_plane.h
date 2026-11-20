@@ -27,6 +27,8 @@
  * @plane_fetch_bw: calculated BW per plane
  * @plane_clk: calculated clk per plane
  * @needs_dirtyfb: whether attached CRTC needs pixel data explicitly flushed
+ * @split_fetch: the pipes of this state each fetch one mixer's half of a
+ *               full-width plane
  * @layout:     framebuffer memory layout
  */
 struct dpu_plane_state {
@@ -41,6 +43,8 @@ struct dpu_plane_state {
 	u64 plane_clk;
 
 	bool needs_dirtyfb;
+
+	bool split_fetch;
 
 	struct dpu_hw_fmt_layout layout;
 };

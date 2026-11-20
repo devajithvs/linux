@@ -15,6 +15,7 @@ static const struct dpu_caps palawan_dpu_caps = {
 	.has_3d_merge = true,
 	.max_linewidth = 8192,
 	.pixel_ram_size = DEFAULT_PIXEL_RAM_SIZE,
+	.split_fetch_per_lm = true,
 };
 
 static const struct dpu_mdp_cfg palawan_mdp = {

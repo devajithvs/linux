@@ -842,6 +842,14 @@ struct dpu_hw_sspp *dpu_rm_reserve_sspp(struct dpu_rm *rm,
 {
 	struct dpu_hw_sspp *hw_sspp = NULL;
 
+	/*
+	 * A pipe that feeds one half of a full-width plane must be a VIG: the
+	 * DMA pipe's single-pipe fetch across the mixer pair shifts the image
+	 * on platforms with split_fetch_per_lm.
+	 */
+	if (reqs->split_fetch)
+		return dpu_rm_try_sspp(rm, global_state, crtc, reqs, SSPP_TYPE_VIG);
+
 	if (!reqs->scale && !reqs->yuv)
 		hw_sspp = dpu_rm_try_sspp(rm, global_state, crtc, reqs, SSPP_TYPE_DMA);
 	if (!hw_sspp && !reqs->yuv)

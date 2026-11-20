@@ -880,10 +880,13 @@ static int dpu_plane_split(struct drm_plane *plane,
 	struct dpu_sw_pipe_cfg *r_pipe_cfg;
 	const struct drm_display_mode *mode = &crtc_state->adjusted_mode;
 	uint32_t max_linewidth;
+	bool split_fetch_per_lm;
 	u32 num_lm;
 	int stage_id, num_stages;
 
 	max_linewidth = pdpu->catalog->caps->max_linewidth;
+	split_fetch_per_lm = pdpu->catalog->caps->split_fetch_per_lm;
+	pstate->split_fetch = false;
 
 	/* In non-virtual plane case, one mixer pair is always needed. */
 	num_lm = dpu_crtc_get_num_lm(crtc_state);
@@ -948,9 +951,36 @@ static int dpu_plane_split(struct drm_plane *plane,
 		DPU_DEBUG_PLANE(pdpu, "Got clip src:" DRM_RECT_FMT " dst: " DRM_RECT_FMT "\n",
 				DRM_RECT_ARG(&pipe_cfg->src_rect), DRM_RECT_ARG(&pipe_cfg->dst_rect));
 
-		/* Split wide rect into 2 rect */
-		if ((drm_rect_width(&pipe_cfg->src_rect) > max_linewidth) ||
-		     _dpu_plane_calc_clk(mode, pipe_cfg) > max_mdp_clk_rate) {
+		/*
+		 * A platform with split_fetch_per_lm cannot fetch a full-width
+		 * plane through one pipe: each mixer takes its own half of the
+		 * line through its own SSPP, source x 0 on the left and
+		 * hdisplay / 2 on the right, destination x 0 in each mixer.
+		 * Only the plane that covers the whole mode is split this way;
+		 * a narrower plane keeps the single-pipe path.
+		 */
+		if (dpu_use_virtual_planes && split_fetch_per_lm &&
+		    stage_id == 0 && num_lm == 2 &&
+		    !(new_plane_state->rotation & DRM_MODE_ROTATE_90) &&
+		    !(mode->hdisplay & 0x1) &&
+		    drm_rect_width(&pipe_cfg->src_rect) == mode->hdisplay &&
+		    drm_rect_width(&pipe_cfg->dst_rect) == mode->hdisplay) {
+			memcpy(r_pipe_cfg, pipe_cfg, sizeof(struct dpu_sw_pipe_cfg));
+			pipe_cfg->src_rect.x2 = pipe_cfg->src_rect.x1 +
+				mode->hdisplay / 2;
+			pipe_cfg->dst_rect.x2 = pipe_cfg->dst_rect.x1 +
+				mode->hdisplay / 2;
+			r_pipe_cfg->src_rect.x1 = pipe_cfg->src_rect.x2;
+			r_pipe_cfg->dst_rect.x1 = pipe_cfg->dst_rect.x1;
+			r_pipe_cfg->dst_rect.x2 = pipe_cfg->dst_rect.x1 +
+				mode->hdisplay / 2;
+			pstate->split_fetch = true;
+			DPU_DEBUG_PLANE(pdpu, "Split plane per LM into:"
+					DRM_RECT_FMT " and " DRM_RECT_FMT "\n",
+					DRM_RECT_ARG(&pipe_cfg->src_rect),
+					DRM_RECT_ARG(&r_pipe_cfg->src_rect));
+		} else if ((drm_rect_width(&pipe_cfg->src_rect) > max_linewidth) ||
+			   _dpu_plane_calc_clk(mode, pipe_cfg) > max_mdp_clk_rate) {
 
 			if (drm_rect_width(&pipe_cfg->src_rect) > 2 * max_linewidth) {
 				DPU_DEBUG_PLANE(pdpu, "invalid src " DRM_RECT_FMT " line:%u\n",
@@ -1220,9 +1250,19 @@ static int dpu_plane_assign_resource_in_stage(struct dpu_sw_pipe *pipe,
 	struct dpu_kms *dpu_kms = _dpu_plane_get_kms(plane);
 	struct dpu_sw_pipe *r_pipe = pipe + 1;
 	struct dpu_sw_pipe_cfg *r_pipe_cfg = pipe_cfg + 1;
+	bool split_fetch;
 
 	if (drm_rect_width(&pipe_cfg->src_rect) == 0)
 		return 0;
+
+	/*
+	 * A full-width plane split per mixer needs one SSPP per half, and
+	 * each of them must be able to fetch its own line; the multirect
+	 * path of a single pipe is not used.
+	 */
+	split_fetch = to_dpu_plane_state(plane_state)->split_fetch &&
+		      drm_rect_width(&r_pipe_cfg->src_rect) != 0;
+	reqs->split_fetch = split_fetch;
 
 	pipe->sspp = dpu_rm_reserve_sspp(&dpu_kms->rm, global_state, crtc, reqs);
 	if (!pipe->sspp)
@@ -1233,10 +1273,11 @@ static int dpu_plane_assign_resource_in_stage(struct dpu_sw_pipe *pipe,
 	if (drm_rect_width(&r_pipe_cfg->src_rect) == 0)
 		return 0;
 
-	if (dpu_plane_try_multirect_parallel(pipe, pipe_cfg, r_pipe, r_pipe_cfg,
-					      pipe->sspp,
-					      msm_framebuffer_format(plane_state->fb),
-					      dpu_kms->catalog->caps->max_linewidth))
+	if (!split_fetch &&
+	    dpu_plane_try_multirect_parallel(pipe, pipe_cfg, r_pipe, r_pipe_cfg,
+					     pipe->sspp,
+					     msm_framebuffer_format(plane_state->fb),
+					     dpu_kms->catalog->caps->max_linewidth))
 		return 0;
 
 	r_pipe->sspp = dpu_rm_reserve_sspp(&dpu_kms->rm, global_state, crtc, reqs);
