@@ -273,6 +273,8 @@ struct dpu_rotation_cfg {
  * @has_dim_layer      dim layer feature status
  * @has_idle_pc        indicate if idle power collapse feature is supported
  * @has_3d_merge       indicate if 3D merge is supported
+ * @needs_per_lm_fetch fetch a full-width plane with one SSPP per LM of a
+ *                     mixer pair instead of one source-split SSPP
  * @max_linewidth      max linewidth for sspp
  * @pixel_ram_size     size of latency hiding and de-tiling buffer in bytes
  * @max_hdeci_exp      max horizontal decimation supported (max is 2^value)
@@ -285,6 +287,7 @@ struct dpu_caps {
 	bool has_dim_layer;
 	bool has_idle_pc;
 	bool has_3d_merge;
+	bool needs_per_lm_fetch;
 	/* SSPP limits */
 	u32 max_linewidth;
 	u32 pixel_ram_size;

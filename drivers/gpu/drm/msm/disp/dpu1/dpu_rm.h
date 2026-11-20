@@ -45,6 +45,7 @@ struct dpu_rm_sspp_requirements {
 	bool yuv;
 	bool scale;
 	bool rot90;
+	bool vig;
 };
 
 /**
@@ -84,11 +85,6 @@ struct dpu_hw_sspp *dpu_rm_reserve_sspp(struct dpu_rm *rm,
 					struct dpu_global_state *global_state,
 					struct drm_crtc *crtc,
 					struct dpu_rm_sspp_requirements *reqs);
-
-struct dpu_hw_sspp *dpu_rm_reserve_vig_sspp(struct dpu_rm *rm,
-					    struct dpu_global_state *global_state,
-					    struct drm_crtc *crtc,
-					    struct dpu_rm_sspp_requirements *reqs);
 
 void dpu_rm_release_all_sspp(struct dpu_global_state *global_state,
 			     struct drm_crtc *crtc);

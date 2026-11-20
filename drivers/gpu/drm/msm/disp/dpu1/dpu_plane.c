@@ -27,7 +27,6 @@
 #include "dpu_crtc.h"
 #include "dpu_vbif.h"
 #include "dpu_plane.h"
-#include "../msm_nord4_geo.h"
 
 #define DPU_DEBUG_PLANE(pl, fmt, ...) DRM_DEBUG_ATOMIC("plane%d " fmt,\
 		(pl) ? (pl)->base.base.id : -1, ##__VA_ARGS__)
@@ -885,6 +884,7 @@ static int dpu_plane_split(struct drm_plane *plane,
 	int stage_id, num_stages;
 
 	max_linewidth = pdpu->catalog->caps->max_linewidth;
+	pstate->per_lm_fetch = false;
 
 	/* In non-virtual plane case, one mixer pair is always needed. */
 	num_lm = dpu_crtc_get_num_lm(crtc_state);
@@ -950,15 +950,15 @@ static int dpu_plane_split(struct drm_plane *plane,
 				DRM_RECT_ARG(&pipe_cfg->src_rect), DRM_RECT_ARG(&pipe_cfg->dst_rect));
 
 		/*
-		 * nord4_split_fetch: the bootloader's per-LM line fetch
-		 * (F0271 §2, §6 rank 1).  Each of the two LMs reads its own
-		 * half of the line through its own SSPP: source x 0 for the
-		 * left half, source x hdisplay/2 for the right half, and
-		 * destination x 0 in each mixer, which is 620 px wide there.
-		 * Only the plane that covers the whole mode is split; a
-		 * narrower plane keeps the single-pipe path.
+		 * Some platforms feed each layer mixer of a pair from its own
+		 * SSPP: a single source-split fetch of the full line gives the
+		 * two DSCs no independent line start.  The two halves are
+		 * fetched from x 0 and x hdisplay/2, and both are placed at
+		 * destination x 0, because each half is the full width of its
+		 * own mixer.
 		 */
-		if (nord4_split_fetch && stage_id == 0 && num_lm == 2 &&
+		if (pdpu->catalog->caps->needs_per_lm_fetch &&
+		    dpu_use_virtual_planes && stage_id == 0 && num_lm == 2 &&
 		    !(new_plane_state->rotation & DRM_MODE_ROTATE_90) &&
 		    !(mode->hdisplay & 0x1) &&
 		    drm_rect_width(&pipe_cfg->src_rect) == mode->hdisplay &&
@@ -972,6 +972,7 @@ static int dpu_plane_split(struct drm_plane *plane,
 			r_pipe_cfg->dst_rect.x1 = pipe_cfg->dst_rect.x1;
 			r_pipe_cfg->dst_rect.x2 = pipe_cfg->dst_rect.x1 +
 				mode->hdisplay / 2;
+			pstate->per_lm_fetch = true;
 			DPU_DEBUG_PLANE(pdpu, "Split plane per LM into:"
 					DRM_RECT_FMT " and " DRM_RECT_FMT "\n",
 					DRM_RECT_ARG(&pipe_cfg->src_rect),
@@ -1247,25 +1248,19 @@ static int dpu_plane_assign_resource_in_stage(struct dpu_sw_pipe *pipe,
 	struct dpu_kms *dpu_kms = _dpu_plane_get_kms(plane);
 	struct dpu_sw_pipe *r_pipe = pipe + 1;
 	struct dpu_sw_pipe_cfg *r_pipe_cfg = pipe_cfg + 1;
-	bool split_fetch;
+	bool per_lm_fetch = to_dpu_plane_state(plane_state)->per_lm_fetch;
 
 	if (drm_rect_width(&pipe_cfg->src_rect) == 0)
 		return 0;
 
 	/*
-	 * nord4_split_fetch gives each half of the line its own SSPP, as the
-	 * bootloader does (F0271 §2): two VIG pipes, never two rectangles of
-	 * one pipe, so the multirect attempt is skipped.
+	 * A per-LM split needs one fetch pipe per LM, not two rectangles of
+	 * one pipe: the split halves the fetch latency and gives each LM's
+	 * DSC encoder its own line start address.
 	 */
-	split_fetch = nord4_split_fetch &&
-		drm_rect_width(&r_pipe_cfg->src_rect) != 0;
+	reqs->vig = per_lm_fetch;
 
-	if (split_fetch)
-		pipe->sspp = dpu_rm_reserve_vig_sspp(&dpu_kms->rm, global_state,
-						     crtc, reqs);
-	else
-		pipe->sspp = dpu_rm_reserve_sspp(&dpu_kms->rm, global_state,
-						 crtc, reqs);
+	pipe->sspp = dpu_rm_reserve_sspp(&dpu_kms->rm, global_state, crtc, reqs);
 	if (!pipe->sspp)
 		return -ENODEV;
 	pipe->multirect_index = DPU_SSPP_RECT_SOLO;
@@ -1274,19 +1269,14 @@ static int dpu_plane_assign_resource_in_stage(struct dpu_sw_pipe *pipe,
 	if (drm_rect_width(&r_pipe_cfg->src_rect) == 0)
 		return 0;
 
-	if (!split_fetch &&
+	if (!per_lm_fetch &&
 	    dpu_plane_try_multirect_parallel(pipe, pipe_cfg, r_pipe, r_pipe_cfg,
 					     pipe->sspp,
 					     msm_framebuffer_format(plane_state->fb),
 					     dpu_kms->catalog->caps->max_linewidth))
 		return 0;
 
-	if (split_fetch)
-		r_pipe->sspp = dpu_rm_reserve_vig_sspp(&dpu_kms->rm, global_state,
-						       crtc, reqs);
-	else
-		r_pipe->sspp = dpu_rm_reserve_sspp(&dpu_kms->rm, global_state,
-						   crtc, reqs);
+	r_pipe->sspp = dpu_rm_reserve_sspp(&dpu_kms->rm, global_state, crtc, reqs);
 	if (!r_pipe->sspp)
 		return -ENODEV;
 	r_pipe->multirect_index = DPU_SSPP_RECT_SOLO;

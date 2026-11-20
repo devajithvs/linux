@@ -842,32 +842,14 @@ struct dpu_hw_sspp *dpu_rm_reserve_sspp(struct dpu_rm *rm,
 {
 	struct dpu_hw_sspp *hw_sspp = NULL;
 
-	if (!reqs->scale && !reqs->yuv)
+	if (!reqs->scale && !reqs->yuv && !reqs->vig)
 		hw_sspp = dpu_rm_try_sspp(rm, global_state, crtc, reqs, SSPP_TYPE_DMA);
-	if (!hw_sspp && !reqs->yuv)
+	if (!hw_sspp && !reqs->yuv && !reqs->vig)
 		hw_sspp = dpu_rm_try_sspp(rm, global_state, crtc, reqs, SSPP_TYPE_RGB);
 	if (!hw_sspp)
 		hw_sspp = dpu_rm_try_sspp(rm, global_state, crtc, reqs, SSPP_TYPE_VIG);
 
 	return hw_sspp;
-}
-
-/**
- * dpu_rm_reserve_vig_sspp - Reserve a VIG-type SSPP for the provided CRTC
- * @rm: DPU resource manager handle
- * @global_state: private global state
- * @crtc: DRM CRTC handle
- * @reqs: SSPP required features
- *
- * Used by nord4_split_fetch, which reproduces the bootloader's per-LM line
- * fetch: one VIG pipe per LM (F0271 §2, §6 rank 1), never a DMA or RGB one.
- */
-struct dpu_hw_sspp *dpu_rm_reserve_vig_sspp(struct dpu_rm *rm,
-					    struct dpu_global_state *global_state,
-					    struct drm_crtc *crtc,
-					    struct dpu_rm_sspp_requirements *reqs)
-{
-	return dpu_rm_try_sspp(rm, global_state, crtc, reqs, SSPP_TYPE_VIG);
 }
 
 /**

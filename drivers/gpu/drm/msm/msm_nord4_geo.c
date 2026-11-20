@@ -33,12 +33,6 @@ MODULE_PARM_DESC(nord4_dd17,
 	"page-1 0x17 value written after 0x29; -1 = write nothing (default -1)");
 EXPORT_SYMBOL_GPL(nord4_dd17);
 
-uint nord4_split_fetch = 1;
-module_param(nord4_split_fetch, uint, 0644);
-MODULE_PARM_DESC(nord4_split_fetch,
-	"1 = split the full-width plane into one VIG pipe per LM (src x 0/620, out x 0); 0 = one pipe, LM-sliced; default 1");
-EXPORT_SYMBOL_GPL(nord4_split_fetch);
-
 uint nord4_dsi_dst_fmt;
 module_param(nord4_dsi_dst_fmt, uint, 0644);
 MODULE_PARM_DESC(nord4_dsi_dst_fmt,

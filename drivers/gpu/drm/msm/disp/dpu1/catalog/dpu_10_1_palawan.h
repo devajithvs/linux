@@ -13,6 +13,8 @@ static const struct dpu_caps palawan_dpu_caps = {
 	.has_dim_layer = true,
 	.has_idle_pc = true,
 	.has_3d_merge = true,
+	/* command-mode DSC: one VIG fetch per LM of the pair (F0271) */
+	.needs_per_lm_fetch = true,
 	.max_linewidth = 8192,
 	.pixel_ram_size = DEFAULT_PIXEL_RAM_SIZE,
 };
