@@ -33,6 +33,12 @@ MODULE_PARM_DESC(nord4_dd17,
 	"page-1 0x17 value written after 0x29; -1 = write nothing (default -1)");
 EXPORT_SYMBOL_GPL(nord4_dd17);
 
+uint nord4_split_fetch = 1;
+module_param(nord4_split_fetch, uint, 0644);
+MODULE_PARM_DESC(nord4_split_fetch,
+	"full-width fetch mode, read at the next plane setup: 0 = one DMA, LM source split; 1 = one VIG per LM (two pipes, src x 0/hdisplay/2, out x 0); 2 = one full-width VIG, LM source split; default 1");
+EXPORT_SYMBOL_GPL(nord4_split_fetch);
+
 uint nord4_dsi_dst_fmt;
 module_param(nord4_dsi_dst_fmt, uint, 0644);
 MODULE_PARM_DESC(nord4_dsi_dst_fmt,

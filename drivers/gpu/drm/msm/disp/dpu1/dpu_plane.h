@@ -21,6 +21,7 @@
  * @pipe_cfg:	software pipe configuration array
  * @stage:	assigned by crtc blender
  * @per_lm_fetch: the plane is split into one SSPP per LM of a mixer pair
+ * @force_vig: the full-width plane must reserve a VIG SSPP
  * @needs_qos_remap: qos remap settings need to be updated
  * @multirect_index: index of the rectangle of SSPP
  * @multirect_mode: parallel or time multiplex multirect mode
@@ -36,6 +37,7 @@ struct dpu_plane_state {
 	struct dpu_sw_pipe_cfg pipe_cfg[PIPES_PER_PLANE];
 	enum dpu_stage stage;
 	bool per_lm_fetch;
+	bool force_vig;
 	bool needs_qos_remap;
 	bool pending;
 

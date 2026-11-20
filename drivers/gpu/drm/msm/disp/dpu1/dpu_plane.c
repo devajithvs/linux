@@ -27,6 +27,7 @@
 #include "dpu_crtc.h"
 #include "dpu_vbif.h"
 #include "dpu_plane.h"
+#include "../msm_nord4_geo.h"
 
 #define DPU_DEBUG_PLANE(pl, fmt, ...) DRM_DEBUG_ATOMIC("plane%d " fmt,\
 		(pl) ? (pl)->base.base.id : -1, ##__VA_ARGS__)
@@ -882,9 +883,14 @@ static int dpu_plane_split(struct drm_plane *plane,
 	uint32_t max_linewidth;
 	u32 num_lm;
 	int stage_id, num_stages;
+	bool per_lm_candidate;
 
 	max_linewidth = pdpu->catalog->caps->max_linewidth;
 	pstate->per_lm_fetch = false;
+	pstate->force_vig = false;
+	if (nord4_dsc_dump)
+		pr_info("nord4-geo: fetch_mode=%u plane=%d\n",
+			nord4_split_fetch, plane->base.id);
 
 	/* In non-virtual plane case, one mixer pair is always needed. */
 	num_lm = dpu_crtc_get_num_lm(crtc_state);
@@ -957,12 +963,15 @@ static int dpu_plane_split(struct drm_plane *plane,
 		 * destination x 0, because each half is the full width of its
 		 * own mixer.
 		 */
-		if (pdpu->catalog->caps->needs_per_lm_fetch &&
-		    dpu_use_virtual_planes && stage_id == 0 && num_lm == 2 &&
-		    !(new_plane_state->rotation & DRM_MODE_ROTATE_90) &&
-		    !(mode->hdisplay & 0x1) &&
-		    drm_rect_width(&pipe_cfg->src_rect) == mode->hdisplay &&
-		    drm_rect_width(&pipe_cfg->dst_rect) == mode->hdisplay) {
+		per_lm_candidate = stage_id == 0 && num_lm == 2 &&
+			!(new_plane_state->rotation & DRM_MODE_ROTATE_90) &&
+			!(mode->hdisplay & 0x1) &&
+			drm_rect_width(&pipe_cfg->src_rect) == mode->hdisplay &&
+			drm_rect_width(&pipe_cfg->dst_rect) == mode->hdisplay;
+
+		if (nord4_split_fetch == 1 &&
+		    pdpu->catalog->caps->needs_per_lm_fetch &&
+		    dpu_use_virtual_planes && per_lm_candidate) {
 			memcpy(r_pipe_cfg, pipe_cfg, sizeof(struct dpu_sw_pipe_cfg));
 			pipe_cfg->src_rect.x2 = pipe_cfg->src_rect.x1 +
 				mode->hdisplay / 2;
@@ -998,6 +1007,9 @@ static int dpu_plane_split(struct drm_plane *plane,
 		} else {
 			memset(r_pipe_cfg, 0, sizeof(struct dpu_sw_pipe_cfg));
 		}
+
+		if (nord4_split_fetch == 2 && per_lm_candidate)
+			pstate->force_vig = true;
 
 		drm_rect_rotate_inv(&pipe_cfg->src_rect,
 				    new_plane_state->fb->width,
@@ -1248,7 +1260,8 @@ static int dpu_plane_assign_resource_in_stage(struct dpu_sw_pipe *pipe,
 	struct dpu_kms *dpu_kms = _dpu_plane_get_kms(plane);
 	struct dpu_sw_pipe *r_pipe = pipe + 1;
 	struct dpu_sw_pipe_cfg *r_pipe_cfg = pipe_cfg + 1;
-	bool per_lm_fetch = to_dpu_plane_state(plane_state)->per_lm_fetch;
+	struct dpu_plane_state *pstate = to_dpu_plane_state(plane_state);
+	bool per_lm_fetch = pstate->per_lm_fetch;
 
 	if (drm_rect_width(&pipe_cfg->src_rect) == 0)
 		return 0;
@@ -1256,9 +1269,10 @@ static int dpu_plane_assign_resource_in_stage(struct dpu_sw_pipe *pipe,
 	/*
 	 * A per-LM split needs one fetch pipe per LM, not two rectangles of
 	 * one pipe: the split halves the fetch latency and gives each LM's
-	 * DSC encoder its own line start address.
+	 * DSC encoder its own line start address.  The one-VIG arm needs the
+	 * same pipe type for a single full-width fetch.
 	 */
-	reqs->vig = per_lm_fetch;
+	reqs->vig = per_lm_fetch || pstate->force_vig;
 
 	pipe->sspp = dpu_rm_reserve_sspp(&dpu_kms->rm, global_state, crtc, reqs);
 	if (!pipe->sspp)

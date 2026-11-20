@@ -9,6 +9,7 @@
 #include "dpu_hw_lm.h"
 #include "dpu_hw_sspp.h"
 #include "dpu_kms.h"
+#include "../msm_nord4_geo.h"
 
 #include <drm/drm_file.h>
 #include <drm/drm_managed.h>
@@ -467,6 +468,19 @@ static void dpu_hw_sspp_setup_rects(struct dpu_sw_pipe *pipe,
 
 	dpu_hw_setup_rects_impl(pipe, cfg, ctx, src_size_off,
 				src_xy_off, out_size_off, out_xy_off);
+
+	/*
+	 * The readback gate: each fetch arm is proved by the SSPP registers
+	 * it actually wrote (src x 0/620 and one or two pipes), not by the
+	 * parameter's value.
+	 */
+	if (nord4_dsc_dump)
+		pr_info("nord4-geo: fetch %s src_xy=0x%08x src_size=0x%08x out_xy=0x%08x out_size=0x%08x\n",
+			ctx->cap->name,
+			DPU_REG_READ(&ctx->hw, src_xy_off),
+			DPU_REG_READ(&ctx->hw, src_size_off),
+			DPU_REG_READ(&ctx->hw, out_xy_off),
+			DPU_REG_READ(&ctx->hw, out_size_off));
 }
 
 static void dpu_hw_sspp_setup_sourceaddress(struct dpu_sw_pipe *pipe,
