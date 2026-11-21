@@ -4,6 +4,10 @@
  */
 
 /* Lamma is just differently fused Palawan with some minor differences. */
+#include <dt-bindings/clock/qcom,palawan-camcc.h>
+#include <dt-bindings/clock/qcom,palawan-gcc.h>
+#include <dt-bindings/interconnect/qcom,palawan-rpmh.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
 #include "palawan.dtsi"
 
 &gpu {
@@ -82,4 +86,274 @@
 &iris {
 	compatible = "qcom,sm7675-iris";
 	firmware-name = "qcom/vpu/vpu30_2v.mbn";
+};
+
+/*
+ * Cameras. The SM7675 camera subsystem is SM8650-shaped: the same CSIPHY,
+ * CSID and VFE windows and the same CAMCC clock space (F0290). Every camera
+ * block belongs to the CAMCC's Titan power domain and its clocks are CAMCC
+ * clocks, so nothing outside this SoC file is involved; the board enables the
+ * blocks it uses and supplies the CSIPHY rails.
+ */
+&soc {
+	cci0: cci@ac15000 {
+		compatible = "qcom,lamma-cci", "qcom,msm8996-cci";
+		reg = <0 0x0ac15000 0 0x1000>;
+		interrupts = <GIC_SPI 426 IRQ_TYPE_EDGE_RISING 0>;
+		power-domains = <&camcc CAM_CC_TITAN_TOP_GDSC>;
+		clocks = <&camcc CAM_CC_CAMNOC_AXI_NRT_CLK>,
+			 <&camcc CAM_CC_CPAS_AHB_CLK>,
+			 <&camcc CAM_CC_CCI_0_CLK>;
+		clock-names = "camnoc_axi",
+			      "cpas_ahb",
+			      "cci";
+		/*
+		 * The driver's CCI v2 bus timings are the 19.2 MHz ones; the
+		 * CAMCC CCI source is also able to run at 37.5 MHz, which the
+		 * bootloader leaves programmed. Pin it.
+		 */
+		assigned-clocks = <&camcc CAM_CC_CCI_0_CLK_SRC>;
+		assigned-clock-rates = <19200000>;
+		pinctrl-0 = <&cci0_0_default &cci0_1_default>;
+		pinctrl-1 = <&cci0_0_sleep &cci0_1_sleep>;
+		pinctrl-names = "default", "sleep";
+		status = "disabled";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cci0_i2c0: i2c-bus@0 {
+			reg = <0>;
+			clock-frequency = <1000000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+		};
+
+		cci0_i2c1: i2c-bus@1 {
+			reg = <1>;
+			clock-frequency = <1000000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+		};
+	};
+
+	camss: isp@acb6000 {
+		compatible = "qcom,sm7675-camss";
+
+		reg = <0 0x0acb6000 0 0x1000>,
+		      <0 0x0acb8000 0 0x1000>,
+		      <0 0x0acba000 0 0x1000>,
+		      <0 0x0acbc000 0 0x1000>,
+		      <0 0x0ace4000 0 0x2000>,
+		      <0 0x0ace6000 0 0x2000>,
+		      <0 0x0ace8000 0 0x2000>,
+		      <0 0x0acea000 0 0x2000>,
+		      <0 0x0acec000 0 0x2000>,
+		      <0 0x0ac62000 0 0xf000>,
+		      <0 0x0ac71000 0 0xf000>,
+		      <0 0x0ac80000 0 0xf000>;
+		reg-names = "csid_wrapper",
+			    "csid0",
+			    "csid1",
+			    "csid2",
+			    "csiphy0",
+			    "csiphy1",
+			    "csiphy2",
+			    "csiphy3",
+			    "csiphy4",
+			    "vfe0",
+			    "vfe1",
+			    "vfe2";
+
+		clocks = <&camcc CAM_CC_CAMNOC_AXI_RT_CLK>,
+			 <&camcc CAM_CC_CPAS_AHB_CLK>,
+			 <&camcc CAM_CC_CPAS_FAST_AHB_CLK>,
+			 <&camcc CAM_CC_CPAS_IFE_0_CLK>,
+			 <&camcc CAM_CC_CPAS_IFE_1_CLK>,
+			 <&camcc CAM_CC_CPAS_IFE_2_CLK>,
+			 <&camcc CAM_CC_CSID_CLK>,
+			 <&camcc CAM_CC_CSIPHY0_CLK>,
+			 <&camcc CAM_CC_CSI0PHYTIMER_CLK>,
+			 <&camcc CAM_CC_CSI1PHYTIMER_CLK>,
+			 <&camcc CAM_CC_CSIPHY1_CLK>,
+			 <&camcc CAM_CC_CSI2PHYTIMER_CLK>,
+			 <&camcc CAM_CC_CSIPHY2_CLK>,
+			 <&camcc CAM_CC_CSI3PHYTIMER_CLK>,
+			 <&camcc CAM_CC_CSIPHY3_CLK>,
+			 <&camcc CAM_CC_CSI4PHYTIMER_CLK>,
+			 <&camcc CAM_CC_CSIPHY4_CLK>,
+			 <&camcc CAM_CC_CSID_CSIPHY_RX_CLK>,
+			 <&gcc GCC_CAMERA_HF_AXI_CLK>,
+			 <&camcc CAM_CC_QDSS_DEBUG_XO_CLK>,
+			 <&camcc CAM_CC_IFE_0_CLK>,
+			 <&camcc CAM_CC_IFE_0_FAST_AHB_CLK>,
+			 <&camcc CAM_CC_IFE_1_CLK>,
+			 <&camcc CAM_CC_IFE_1_FAST_AHB_CLK>,
+			 <&camcc CAM_CC_IFE_2_CLK>,
+			 <&camcc CAM_CC_IFE_2_FAST_AHB_CLK>;
+		clock-names = "camnoc_axi",
+			      "cpas_ahb",
+			      "cpas_fast_ahb",
+			      "cpas_vfe0",
+			      "cpas_vfe1",
+			      "cpas_vfe2",
+			      "csid",
+			      "csiphy0",
+			      "csiphy0_timer",
+			      "csiphy1",
+			      "csiphy1_timer",
+			      "csiphy2",
+			      "csiphy2_timer",
+			      "csiphy3",
+			      "csiphy3_timer",
+			      "csiphy4",
+			      "csiphy4_timer",
+			      "csiphy_rx",
+			      "gcc_axi_hf",
+			      "qdss_debug_xo",
+			      "vfe0",
+			      "vfe0_fast_ahb",
+			      "vfe1",
+			      "vfe1_fast_ahb",
+			      "vfe2",
+			      "vfe2_fast_ahb";
+
+		interrupts = <GIC_SPI 601 IRQ_TYPE_EDGE_RISING 0>,
+			     <GIC_SPI 603 IRQ_TYPE_EDGE_RISING 0>,
+			     <GIC_SPI 431 IRQ_TYPE_EDGE_RISING 0>,
+			     <GIC_SPI 477 IRQ_TYPE_EDGE_RISING 0>,
+			     <GIC_SPI 478 IRQ_TYPE_EDGE_RISING 0>,
+			     <GIC_SPI 479 IRQ_TYPE_EDGE_RISING 0>,
+			     <GIC_SPI 448 IRQ_TYPE_EDGE_RISING 0>,
+			     <GIC_SPI 122 IRQ_TYPE_EDGE_RISING 0>,
+			     <GIC_SPI 602 IRQ_TYPE_EDGE_RISING 0>,
+			     <GIC_SPI 604 IRQ_TYPE_EDGE_RISING 0>,
+			     <GIC_SPI 688 IRQ_TYPE_EDGE_RISING 0>;
+		interrupt-names = "csid0",
+				  "csid1",
+				  "csid2",
+				  "csiphy0",
+				  "csiphy1",
+				  "csiphy2",
+				  "csiphy3",
+				  "csiphy4",
+				  "vfe0",
+				  "vfe1",
+				  "vfe2";
+
+		interconnects = <&gem_noc MASTER_APPSS_PROC 0
+				 &config_noc SLAVE_CAMERA_CFG 0>,
+				<&mmss_noc MASTER_CAMNOC_HF 0
+				 &mc_virt SLAVE_EBI1 0>;
+		interconnect-names = "ahb",
+				     "hf_mnoc";
+
+		iommus = <&apps_smmu 0x800 0x20>,
+			 <&apps_smmu 0x18a0 0x40>,
+			 <&apps_smmu 0x1860 0x00>;
+
+		power-domains = <&camcc CAM_CC_IFE_0_GDSC>,
+				<&camcc CAM_CC_IFE_1_GDSC>,
+				<&camcc CAM_CC_IFE_2_GDSC>,
+				<&camcc CAM_CC_TITAN_TOP_GDSC>;
+		power-domain-names = "ife0", "ife1", "ife2", "top";
+
+		status = "disabled";
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+			};
+
+			port@1 {
+				reg = <1>;
+			};
+
+			port@2 {
+				reg = <2>;
+			};
+
+			port@3 {
+				reg = <3>;
+			};
+
+			port@4 {
+				reg = <4>;
+			};
+		};
+	};
+};
+
+/*
+ * CCI0's two buses are SoC pins. The downstream overlay names four
+ * functions (cci_i2c_sda0/scl0/sda1/scl1); the pin controller exposes one
+ * cci_i2c_sda and one cci_i2c_scl, selected by pin. The electrics are the
+ * stock states: 2 mA, pulled up awake and down asleep.
+ */
+&tlmm {
+	cci0_0_default: cci0-0-default-state {
+		sda-pins {
+			pins = "gpio70";
+			function = "cci_i2c_sda";
+			drive-strength = <2>;
+			bias-pull-up;
+		};
+
+		scl-pins {
+			pins = "gpio71";
+			function = "cci_i2c_scl";
+			drive-strength = <2>;
+			bias-pull-up;
+		};
+	};
+
+	cci0_0_sleep: cci0-0-sleep-state {
+		sda-pins {
+			pins = "gpio70";
+			function = "cci_i2c_sda";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+
+		scl-pins {
+			pins = "gpio71";
+			function = "cci_i2c_scl";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+	};
+
+	cci0_1_default: cci0-1-default-state {
+		sda-pins {
+			pins = "gpio72";
+			function = "cci_i2c_sda";
+			drive-strength = <2>;
+			bias-pull-up;
+		};
+
+		scl-pins {
+			pins = "gpio73";
+			function = "cci_i2c_scl";
+			drive-strength = <2>;
+			bias-pull-up;
+		};
+	};
+
+	cci0_1_sleep: cci0-1-sleep-state {
+		sda-pins {
+			pins = "gpio72";
+			function = "cci_i2c_sda";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+
+		scl-pins {
+			pins = "gpio73";
+			function = "cci_i2c_scl";
+			drive-strength = <2>;
+			bias-pull-down;
+		};
+	};
 };

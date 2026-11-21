@@ -385,6 +385,19 @@
 		};
 
 		/*
+		 * L23B: the camera I/O rail. 1650000-3544000 uV, init 1650000
+		 * (downstream qcom/cliffs-regulators.dtsi:810-823). Every camera
+		 * node names it as 1.8 V, which is what the camera drivers
+		 * request when they power a module up.
+		 */
+		vreg_l23b: ldo23 {
+			regulator-name = "vreg_l23b";
+			regulator-min-microvolt = <1650000>;
+			regulator-max-microvolt = <3544000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		/*
 		 * BOB: the WCD937x codec's mic-bias supply. The PMXR2230 (PM7550)
 		 * BOB is the RPMh bobb1 resource: 3.008-3.96 V, init 3.296 V,
 		 * and the codec draws 6760 uA from it
@@ -1560,5 +1573,130 @@
 		function = "gpio";
 		drive-strength = <2>;
 		bias-pull-up;
+	};
+
+	/*
+	 * The ultrawide's MCLK1 and reset, as in the stock sensor node.
+	 */
+	cam_mclk1_default: cam-mclk1-default-state {
+		pins = "gpio65";
+		function = "cam_mclk";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	cam_reset1_default: cam-reset1-default-state {
+		pins = "gpio14";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+};
+
+/*
+ * Cameras: the ultrawide (IMX355) path.
+ *
+ * Everything here is the downstream Avalon camera overlay
+ * (vendor/qcom/proprietary/camera-devicetree/oplus/
+ * avalon_camera_overlay_common.dtsi, sensor1 node): CCI0 master 1 into
+ * CSIPHY1, MCLK1 at 19.2 MHz on TLMM 65, reset on TLMM 14, AVDD 2.8 V from
+ * the AW37004's AVDD1, DVDD 1.2 V from L3C and I/O 1.8 V from L23B. The
+ * stock text does not carry the sensor's 7-bit address; 0x1a is the IMX355's
+ * fixed address and the one the only other Qualcomm boards with this part
+ * use (sdm845-google-common.dtsi:361, sdm670-google-common.dtsi:441); the
+ * probe is what confirms it on this board.
+ *
+ * The AW37004's four outputs keep the PMIC's documented ranges; the two
+ * AVDD rails are pinned at the stock 2.8 V because the sensor drivers do not
+ * change their voltage.
+ */
+&i2c7 {
+	status = "okay";
+	clock-frequency = <400000>;
+
+	cam_pmic: regulator@28 {
+		compatible = "awinic,aw37004";
+		reg = <0x28>;
+
+		dvdd1 {
+			regulator-name = "cam_dvdd1";
+			regulator-min-microvolt = <600000>;
+			regulator-max-microvolt = <1800000>;
+		};
+
+		dvdd2 {
+			regulator-name = "cam_dvdd2";
+			regulator-min-microvolt = <600000>;
+			regulator-max-microvolt = <1800000>;
+		};
+
+		cam_avdd1: avdd1 {
+			regulator-name = "cam_avdd1";
+			regulator-min-microvolt = <2800000>;
+			regulator-max-microvolt = <2800000>;
+		};
+
+		avdd2 {
+			regulator-name = "cam_avdd2";
+			regulator-min-microvolt = <2800000>;
+			regulator-max-microvolt = <2800000>;
+		};
+	};
+};
+
+&cci0 {
+	status = "okay";
+};
+
+&cci0_i2c1 {
+	camera@1a {
+		compatible = "sony,imx355";
+		reg = <0x1a>;
+
+		clocks = <&camcc CAM_CC_MCLK1_CLK>;
+		assigned-clocks = <&camcc CAM_CC_MCLK1_CLK>;
+		assigned-clock-rates = <19200000>;
+
+		reset-gpios = <&tlmm 14 GPIO_ACTIVE_LOW>;
+
+		avdd-supply = <&cam_avdd1>;
+		dvdd-supply = <&vreg_l3c_1p2>;
+		dovdd-supply = <&vreg_l23b>;
+
+		pinctrl-0 = <&cam_mclk1_default &cam_reset1_default>;
+		pinctrl-names = "default";
+
+		port {
+			imx355_ep: endpoint {
+				data-lanes = <1 2 3 4>;
+				link-frequencies = /bits/ 64 <360000000>;
+				remote-endpoint = <&csiphy1_ep>;
+			};
+		};
+	};
+};
+
+&camss {
+	/*
+	 * The stock overlay puts all five PHYs on the same pair of rails:
+	 * csi-vdd-0p9 on L2B and csi-vdd-1p2 on L4B (dtbo entry 0,
+	 * fragment@80).
+	 */
+	vdd-csiphy01-0p9-supply = <&vreg_l2b_0p95>;
+	vdd-csiphy01-1p2-supply = <&vreg_l4b_1p2>;
+	vdd-csiphy24-0p9-supply = <&vreg_l2b_0p95>;
+	vdd-csiphy24-1p2-supply = <&vreg_l4b_1p2>;
+	vdd-csiphy35-0p9-supply = <&vreg_l2b_0p95>;
+	vdd-csiphy35-1p2-supply = <&vreg_l4b_1p2>;
+
+	status = "okay";
+
+	ports {
+		port@1 {
+			csiphy1_ep: endpoint {
+				data-lanes = <0 1 2 3>;
+				remote-endpoint = <&imx355_ep>;
+			};
+		};
 	};
 };

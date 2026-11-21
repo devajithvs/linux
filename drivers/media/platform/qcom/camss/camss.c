@@ -5723,6 +5723,28 @@ static const struct camss_resources sm8650_resources = {
 	.vfe_num = ARRAY_SIZE(vfe_res_sm8650),
 };
 
+/*
+ * SM7675 carries five CSIPHY, three full CSID/VFE and two lite CSID/VFE
+ * blocks, whose registers are the SM8650 gen3 ones. Only the full-size
+ * windows and the five PHYs are described: the vendor's lite CSID and lite
+ * VFE windows start at the same address (0xaccb000 and 0xacd0000), which the
+ * mainline subdevice mapping cannot request twice, and the first camera path
+ * does not use them.
+ */
+static const struct camss_resources sm7675_resources = {
+	.version = CAMSS_8650,
+	.pd_name = "top",
+	.csiphy_res = csiphy_res_sm8650,
+	.csid_res = csid_res_sm8650,
+	.csid_wrapper_res = &csid_wrapper_res_sm8550,
+	.vfe_res = vfe_res_sm8650,
+	.icc_res = icc_res_sm8650,
+	.icc_path_num = ARRAY_SIZE(icc_res_sm8650),
+	.csiphy_num = 5,
+	.csid_num = 3,
+	.vfe_num = 3,
+};
+
 static const struct camss_resources x1e80100_resources = {
 	.version = CAMSS_X1E80100,
 	.pd_name = "top",
@@ -5754,6 +5776,7 @@ static const struct of_device_id camss_dt_match[] = {
 	{ .compatible = "qcom,sdm845-camss", .data = &sdm845_resources },
 	{ .compatible = "qcom,sm6150-camss", .data = &sm6150_resources },
 	{ .compatible = "qcom,sm6350-camss", .data = &sm6350_resources },
+	{ .compatible = "qcom,sm7675-camss", .data = &sm7675_resources },
 	{ .compatible = "qcom,sm8250-camss", .data = &sm8250_resources },
 	{ .compatible = "qcom,sm8550-camss", .data = &sm8550_resources },
 	{ .compatible = "qcom,sm8650-camss", .data = &sm8650_resources },
