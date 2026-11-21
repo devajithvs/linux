@@ -541,6 +541,17 @@ static int qcom_battmgr_bat_get_property(struct power_supply *psy,
 		return 0;
 	}
 
+	/*
+	 * The ADSP battery on this board is the F0279 stub (50 %, fixed
+	 * 4.45 V) and the pack is the bq27541 gauge; a DEVICE scope makes
+	 * UPower skip it instead of taking its state and time-to-full
+	 * (F0357). No firmware request backs this property.
+	 */
+	if (psp == POWER_SUPPLY_PROP_SCOPE) {
+		val->intval = POWER_SUPPLY_SCOPE_DEVICE;
+		return 0;
+	}
+
 	if (battmgr->variant == QCOM_BATTMGR_SC8280XP ||
 	    battmgr->variant == QCOM_BATTMGR_X1E80100)
 		ret = qcom_battmgr_bat_sc8280xp_update(battmgr, psp);
@@ -1036,6 +1047,7 @@ static const enum power_supply_property sm8550_oplus_bat_props[] = {
 	POWER_SUPPLY_PROP_STATE_OF_HEALTH,
 	POWER_SUPPLY_PROP_POWER_NOW,
 	POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR,
+	POWER_SUPPLY_PROP_SCOPE,
 };
 
 static const struct power_supply_desc sm8550_oplus_bat_psy_desc = {
