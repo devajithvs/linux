@@ -3,6 +3,8 @@
  * Copyright (c) 2015, The Linux Foundation. All rights reserved.
  */
 
+#include <drm/drm_panel.h>
+
 #include "drm/drm_bridge_connector.h"
 
 #include "msm_kms.h"
@@ -485,7 +487,126 @@ int msm_dsi_manager_connector_init(struct msm_dsi *msm_dsi,
 		return PTR_ERR(connector);
 	}
 
+	/* the atomic commit path finds its DSI link from the connector */
+	msm_dsi->connector = connector;
+
 	return 0;
+}
+
+/*
+ * The panel a connector's DSI host drives, if it has one that can re-time
+ * itself without a modeset.
+ */
+static struct drm_panel *dsi_mgr_connector_panel(struct drm_connector *connector)
+{
+	int i;
+
+	for (i = 0; i < DSI_MAX; i++) {
+		struct msm_dsi *msm_dsi = dsi_mgr_get_dsi(i);
+
+		if (msm_dsi && msm_dsi->connector == connector)
+			return msm_dsi_host_get_panel(msm_dsi->host);
+	}
+
+	return NULL;
+}
+
+static bool dsi_mgr_seamless_switch(struct drm_atomic_commit *state,
+				    struct drm_connector *connector,
+				    struct drm_connector_state *conn_state,
+				    struct drm_crtc_state **old_crtc_state,
+				    struct drm_panel **panel)
+{
+	struct drm_crtc_state *new_crtc_state;
+
+	*panel = dsi_mgr_connector_panel(connector);
+	if (!*panel || !(*panel)->funcs || !(*panel)->funcs->set_refresh_rate)
+		return false;
+	if (!conn_state->crtc)
+		return false;
+
+	/* at check time crtc->state is still the old state; ask the commit */
+	new_crtc_state = drm_atomic_get_new_crtc_state(state, conn_state->crtc);
+	if (!new_crtc_state)
+		return false;
+	*old_crtc_state = drm_atomic_get_old_crtc_state(state, conn_state->crtc);
+	if (!*old_crtc_state || !(*old_crtc_state)->enable || !new_crtc_state->enable)
+		return false;
+
+	/* only the frame rate changed: the resolution and the DSC geometry did not */
+	return new_crtc_state->adjusted_mode.hdisplay ==
+		       (*old_crtc_state)->adjusted_mode.hdisplay &&
+	       new_crtc_state->adjusted_mode.vdisplay ==
+		       (*old_crtc_state)->adjusted_mode.vdisplay &&
+	       drm_mode_vrefresh(&new_crtc_state->adjusted_mode) !=
+		       drm_mode_vrefresh(&(*old_crtc_state)->adjusted_mode);
+}
+
+/*
+ * Accept a same-resolution mode change on a panel with its own timing switch
+ * as a refresh switch and not as a modeset.  The DDIC's timing-switch
+ * command moves the frame rate; the host timing, the DSI link rate and the
+ * CRTC stay exactly as they are, so nothing blanks.  Called from
+ * msm_atomic_check() after drm_atomic_helper_check() has set mode_changed
+ * and before drm_atomic_check_only() rejects a commit that needs a modeset
+ * without ALLOW_MODESET.
+ */
+void msm_dsi_manager_allow_seamless_refresh(struct drm_atomic_commit *state)
+{
+	struct drm_connector *connector;
+	struct drm_connector_state *conn_state;
+	struct drm_crtc_state *old_crtc_state;
+	struct drm_panel *panel;
+	int i;
+
+	for_each_new_connector_in_state(state, connector, conn_state, i) {
+		struct drm_crtc_state *new_state;
+
+		if (!conn_state->crtc)
+			continue;
+		new_state = drm_atomic_get_new_crtc_state(state, conn_state->crtc);
+		if (!new_state || !new_state->mode_changed)
+			continue;
+		if (!dsi_mgr_seamless_switch(state, connector, conn_state,
+					     &old_crtc_state, &panel))
+			continue;
+
+		dev_dbg(state->dev->dev, "[CONNECTOR:%d:%s] %u -> %u Hz without a modeset\n",
+			    connector->base.id, connector->name,
+			    drm_mode_vrefresh(&old_crtc_state->adjusted_mode),
+			    drm_mode_vrefresh(&new_state->adjusted_mode));
+		new_state->mode_changed = false;
+	}
+}
+
+/*
+ * Apply the refresh switch the check above accepted: the DDIC's timing
+ * command goes out at the commit's frame boundary, before the plane update
+ * that follows it.  Called from the atomic commit tail, between the
+ * (skipped) modeset disables and the plane commit.
+ */
+void msm_dsi_manager_commit_seamless_refresh(struct drm_atomic_commit *state)
+{
+	struct drm_connector *connector;
+	struct drm_connector_state *conn_state;
+	struct drm_crtc_state *old_crtc_state, *new_crtc_state;
+	struct drm_panel *panel;
+	unsigned int vrefresh;
+	int i;
+
+	for_each_new_connector_in_state(state, connector, conn_state, i) {
+		if (!dsi_mgr_seamless_switch(state, connector, conn_state,
+					     &old_crtc_state, &panel))
+			continue;
+		new_crtc_state = drm_atomic_get_new_crtc_state(state, conn_state->crtc);
+		if (!new_crtc_state || drm_atomic_crtc_needs_modeset(new_crtc_state))
+			continue;
+
+		vrefresh = drm_mode_vrefresh(&new_crtc_state->adjusted_mode);
+		if (panel->funcs->set_refresh_rate(panel, vrefresh))
+			drm_err(state->dev, "[CONNECTOR:%d:%s] %u Hz switch failed\n",
+				connector->base.id, connector->name, vrefresh);
+	}
 }
 
 int msm_dsi_manager_cmd_xfer(int id, const struct mipi_dsi_msg *msg)

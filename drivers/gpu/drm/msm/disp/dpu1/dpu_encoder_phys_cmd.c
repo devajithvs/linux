@@ -589,6 +589,24 @@ static void dpu_encoder_phys_cmd_prepare_for_kickoff(
 		DPU_ERROR("invalid encoder\n");
 		return;
 	}
+
+	/*
+	 * A seamless refresh switch changes the CRTC's mode without a modeset,
+	 * so the mode this encoder was set up with is stale.  The tearcheck
+	 * divides the vsync clock by vtotal * vrefresh; re-arm it for the new
+	 * frame length before this frame is kicked off.
+	 */
+	if (phys_enc->parent && phys_enc->parent->crtc) {
+		const struct drm_display_mode *mode =
+			&phys_enc->parent->crtc->state->adjusted_mode;
+
+		if (mode->vtotal &&
+		    drm_mode_vrefresh(mode) != drm_mode_vrefresh(&phys_enc->cached_mode)) {
+			phys_enc->cached_mode = *mode;
+			dpu_encoder_phys_cmd_tearcheck_config(phys_enc);
+		}
+	}
+
 	DRM_DEBUG_KMS("id:%u pp:%d pending_cnt:%d\n", DRMID(phys_enc->parent),
 		      phys_enc->hw_pp->idx - PINGPONG_0,
 		      atomic_read(&phys_enc->pending_kickoff_cnt));

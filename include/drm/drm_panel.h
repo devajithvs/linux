@@ -119,6 +119,24 @@ struct drm_panel_funcs {
 			 struct drm_connector *connector);
 
 	/**
+	 * @set_refresh_rate:
+	 *
+	 * Program a new frame rate without a modeset.  Only a panel whose
+	 * DDIC owns the frame timing can do this: the panel's own timing
+	 * switch command changes the frame rate while the host keeps its
+	 * timing, the DSI link rate and the CRTC enabled, so the glass never
+	 * blanks.  The caller has already accepted a same-resolution mode
+	 * change as a refresh switch (`mode_changed` cleared) and calls this
+	 * from the atomic commit tail, in commit order with the plane update
+	 * that follows it.
+	 *
+	 * Returns 0 on success or a negative error code.
+	 *
+	 * This function is optional.
+	 */
+	int (*set_refresh_rate)(struct drm_panel *panel, unsigned int vrefresh);
+
+	/**
 	 * @get_orientation:
 	 *
 	 * Return the panel orientation set by device tree or EDID.

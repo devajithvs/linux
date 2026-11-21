@@ -22,6 +22,7 @@
 
 struct msm_dsi_phy_shared_timings;
 struct msm_dsi_phy_clk_request;
+struct drm_panel;
 
 enum msm_dsi_phy_usecase {
 	MSM_DSI_PHY_STANDALONE,
@@ -40,6 +41,7 @@ struct msm_dsi {
 	const char *te_source;
 
 	struct drm_bridge *next_bridge;
+	struct drm_connector *connector;
 
 	struct device *phy_dev;
 	bool phy_enabled;
@@ -55,9 +57,12 @@ bool msm_dsi_manager_cmd_xfer_trigger(int id, u32 dma_base, u32 len);
 int msm_dsi_manager_register(struct msm_dsi *msm_dsi);
 void msm_dsi_manager_unregister(struct msm_dsi *msm_dsi);
 void msm_dsi_manager_tpg_enable(void);
+void msm_dsi_manager_allow_seamless_refresh(struct drm_atomic_commit *state);
+void msm_dsi_manager_commit_seamless_refresh(struct drm_atomic_commit *state);
 
 /* dsi host */
 struct msm_dsi_host;
+struct drm_panel *msm_dsi_host_get_panel(struct mipi_dsi_host *host);
 int msm_dsi_host_xfer_prepare(struct mipi_dsi_host *host,
 					const struct mipi_dsi_msg *msg);
 void msm_dsi_host_xfer_restore(struct mipi_dsi_host *host,

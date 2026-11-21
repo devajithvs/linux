@@ -22,6 +22,7 @@
 
 #include <drm/display/drm_dsc_helper.h>
 #include <drm/drm_of.h>
+#include <drm/drm_panel.h>
 
 #include "dsi.h"
 #include "dsi.xml.h"
@@ -106,6 +107,8 @@ struct msm_dsi_host {
 	struct drm_device *dev;
 
 	int id;
+
+	struct drm_panel *panel;
 
 	void __iomem *ctrl_base;
 	phys_addr_t ctrl_size;
@@ -1740,15 +1743,44 @@ static int dsi_host_attach(struct mipi_dsi_host *host,
 	if (ret)
 		return ret;
 
+	/*
+	 * The panel that owns this link, if the client is one.  Kept for the
+	 * seamless refresh switch: only the panel knows its own timing
+	 * switch command, and only the host knows when a commit needs it.
+	 * The panel is the port's endpoint, not the client device's node.
+	 */
+	if (msm_host->pdev->dev.of_node) {
+		struct device_node *np =
+			of_graph_get_remote_node(msm_host->pdev->dev.of_node, 1, 0);
+
+		if (np) {
+			struct drm_panel *panel = of_drm_find_panel(np);
+
+			if (!IS_ERR(panel))
+				msm_host->panel = panel;
+			of_node_put(np);
+		}
+	}
+
 	DBG("id=%d", msm_host->id);
 
 	return 0;
+}
+
+struct drm_panel *msm_dsi_host_get_panel(struct mipi_dsi_host *host)
+{
+	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
+
+	return msm_host->panel;
 }
 
 static int dsi_host_detach(struct mipi_dsi_host *host,
 					struct mipi_dsi_device *dsi)
 {
 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
+
+	/* of_drm_find_panel() takes no reference; nothing to put here */
+	msm_host->panel = NULL;
 
 	dsi_dev_detach(msm_host->pdev);
 	msm_host->dsc = NULL;

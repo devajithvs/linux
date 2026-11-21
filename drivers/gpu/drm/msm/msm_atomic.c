@@ -11,6 +11,7 @@
 #include "msm_drv.h"
 #include "msm_gem.h"
 #include "msm_kms.h"
+#include "dsi/dsi.h"
 
 /*
  * Helpers to control vblanks while we flush.. basically just to ensure
@@ -207,7 +208,19 @@ int msm_atomic_check(struct drm_device *dev, struct drm_atomic_commit *state)
 	if (ret)
 		return ret;
 
-	return drm_atomic_helper_check(dev, state);
+	ret = drm_atomic_helper_check(dev, state);
+	if (ret)
+		return ret;
+
+	/*
+	 * A same-resolution mode change on a panel whose DDIC owns its frame
+	 * timing is a refresh switch, not a modeset: accept it here, before
+	 * drm_atomic_check_only() verifies ALLOW_MODESET, and the commit tail
+	 * leaves the CRTC and the DSI link alone.
+	 */
+	msm_dsi_manager_allow_seamless_refresh(state);
+
+	return 0;
 }
 
 void msm_atomic_commit_tail(struct drm_atomic_commit *state)
@@ -245,6 +258,7 @@ void msm_atomic_commit_tail(struct drm_atomic_commit *state)
 	 * Push atomic updates down to hardware:
 	 */
 	drm_atomic_helper_commit_modeset_disables(dev, state);
+	msm_dsi_manager_commit_seamless_refresh(state);
 	drm_atomic_helper_commit_planes(dev, state, 0);
 	drm_atomic_helper_commit_modeset_enables(dev, state);
 

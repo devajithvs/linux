@@ -36,6 +36,7 @@ struct aa553_panel {
 	struct gpio_desc *reset_gpio;
 	struct regulator_bulk_data *supplies;
 	struct drm_connector *connector;
+	unsigned int refresh_hz;	/* last rate the DDIC was told to run */
 	bool prepared;
 };
 
@@ -286,44 +287,27 @@ static const struct aa553_refresh aa553_refresh[] = {
 	{  60, 0x03, 0x22, { 0x15, 0xe0 } },
 };
 
-/*
- * The rate KMS selected is not handed to a drm_panel.  A mode change makes
- * the atomic helpers disable and re-enable the whole bridge chain, so
- * .prepare() runs again, and by then drm_atomic_helper_swap_state() has put
- * the new mode into the connector's state.  Read the adjusted mode from
- * there and send the timing switch after the init table, which is the 120 Hz
- * table.
- */
-static int aa553_apply_refresh_rate(struct aa553_panel *ctx)
+static const struct aa553_refresh *aa553_rate(unsigned int vrefresh)
 {
-	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
-	const struct drm_display_mode *mode;
-	const struct aa553_refresh *rate = NULL;
-	unsigned int vrefresh = 120;
 	unsigned int i;
 
-	if (ctx->connector && ctx->connector->state && ctx->connector->state->crtc) {
-		mode = &ctx->connector->state->crtc->state->adjusted_mode;
-		if (mode->htotal && mode->vtotal)
-			vrefresh = drm_mode_vrefresh(mode);
-	}
+	for (i = 0; i < ARRAY_SIZE(aa553_refresh); i++)
+		if (aa553_refresh[i].vrefresh == vrefresh)
+			return &aa553_refresh[i];
 
-	for (i = 0; i < ARRAY_SIZE(aa553_refresh); i++) {
-		if (aa553_refresh[i].vrefresh == vrefresh) {
-			rate = &aa553_refresh[i];
-			break;
-		}
-	}
+	return NULL;
+}
 
-	if (!rate) {
-		dev_warn(ctx->panel.dev,
-			 "%u Hz is not one of the panel's modes; leaving 120 Hz\n",
-			 vrefresh);
-		return 0;
-	}
-
-	if (rate->vrefresh == 120)
-		return 0;	/* the init table already programmed 120 Hz */
+/*
+ * The DDIC's timing switch: 2F selects the frame rate, the page-0 em-duty
+ * pair the emission timing that goes with it.  Sent in high speed mode over
+ * the live link; the DDIC takes the new timing at its next frame, so the
+ * TE line never stops and nothing on the host side is reprogrammed.
+ */
+static int aa553_send_timing_switch(struct aa553_panel *ctx,
+				    const struct aa553_refresh *rate)
+{
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 
 	mipi_dsi_dcs_write_var_seq_multi(&dsi_ctx, 0x2f, rate->frame_rate);
 	aa553_switch_page(&dsi_ctx, 0x00);
@@ -334,6 +318,85 @@ static int aa553_apply_refresh_rate(struct aa553_panel *ctx)
 					 rate->em_duty_38[1]);
 
 	return dsi_ctx.accum_err;
+}
+
+/*
+ * The rate KMS selected is not handed to a drm_panel.  A mode change makes
+ * the atomic helpers disable and re-enable the whole bridge chain, so
+ * .prepare() runs again, and by then drm_atomic_helper_swap_state() has put
+ * the new mode into the connector's state.  Read the adjusted mode from
+ * there and send the timing switch after the init table, which is the 120 Hz
+ * table.
+ */
+static int aa553_apply_refresh_rate(struct aa553_panel *ctx)
+{
+	const struct drm_display_mode *mode;
+	const struct aa553_refresh *rate;
+	unsigned int vrefresh = 120;
+
+	if (ctx->connector && ctx->connector->state && ctx->connector->state->crtc) {
+		mode = &ctx->connector->state->crtc->state->adjusted_mode;
+		if (mode->htotal && mode->vtotal)
+			vrefresh = drm_mode_vrefresh(mode);
+	}
+
+	rate = aa553_rate(vrefresh);
+	if (!rate) {
+		dev_warn(ctx->panel.dev,
+			 "%u Hz is not one of the panel's modes; leaving 120 Hz\n",
+			 vrefresh);
+		return 0;
+	}
+
+	if (rate->vrefresh == 120) {
+		ctx->refresh_hz = 120;	/* the init table programmed it */
+		return 0;
+	}
+
+	if (aa553_send_timing_switch(ctx, rate) < 0)
+		return -EIO;
+
+	ctx->refresh_hz = rate->vrefresh;
+
+	return 0;
+}
+
+/*
+ * A same-resolution mode change is not a modeset: msm clears mode_changed
+ * for it and calls this from the atomic commit tail, so the CRTC, the DSI
+ * link and the panel's init table all stay up and only the DDIC's frame
+ * timing changes.  Measured: no TE gap and no DSI off/on across the switch
+ * (F0337).
+ */
+static int aa553_set_refresh_rate(struct drm_panel *panel, unsigned int vrefresh)
+{
+	struct aa553_panel *ctx = to_aa553_panel(panel);
+	const struct aa553_refresh *rate = aa553_rate(vrefresh);
+	unsigned int old;
+
+	if (!rate) {
+		dev_warn(ctx->panel.dev, "%u Hz is not one of the panel's modes\n",
+			 vrefresh);
+		return -EINVAL;
+	}
+
+	/* .prepare() keys the DDIC on the mode it runs for; nothing to do yet */
+	if (!ctx->prepared || rate->vrefresh == ctx->refresh_hz)
+		return 0;
+
+	old = ctx->refresh_hz;
+
+	if (aa553_send_timing_switch(ctx, rate) < 0) {
+		dev_err(ctx->panel.dev, "timing switch %u -> %u Hz failed\n",
+			old, rate->vrefresh);
+		return -EIO;
+	}
+
+	ctx->refresh_hz = rate->vrefresh;
+	dev_info(ctx->panel.dev, "refresh %u -> %u Hz, no modeset\n",
+		 old, rate->vrefresh);
+
+	return 0;
 }
 
 /*
@@ -561,6 +624,7 @@ static const struct drm_panel_funcs aa553_panel_funcs = {
 	.disable = aa553_disable,
 	.unprepare = aa553_unprepare,
 	.get_modes = aa553_get_modes,
+	.set_refresh_rate = aa553_set_refresh_rate,
 };
 
 /*
