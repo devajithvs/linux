@@ -6,9 +6,16 @@
 #include <linux/arm-smccc.h>
 #include <linux/delay.h>
 #include <linux/errno.h>
+#include <linux/init.h>
+#include <linux/irqflags.h>
+#include <linux/jiffies.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
+#include <linux/processor.h>
+#include <linux/smp.h>
+#include <linux/string.h>
+#include <linux/timer.h>
 #include <linux/watchdog.h>
 
 #define GUNYAH_WDT_SMCCC_CALL_VAL(func_id) \
@@ -98,6 +105,82 @@ static int gunyah_wdt_ping(struct watchdog_device *wdd)
 {
 	return gunyah_wdt_call(GUNYAH_WDT_PING, 0, 0);
 }
+
+/*
+ * Unattended-boot watchdog gate (F0338, ADR-0014). A RAM-booted test image
+ * that hangs before userspace must come back to boot_b on its own. The Gunyah
+ * watchdog is the only hardware watchdog this SoC exposes to Linux, and probe
+ * stops the one the bootloader left armed (below). With nord4.wdt_arm on a
+ * test cmdline, arm it here and feed it from a kernel timer: a hang that stops
+ * timers, including one with interrupts disabled, stops the pings and the
+ * hypervisor resets the phone.
+ *
+ * Both hooks are inert without their cmdline parameter, so no image that does
+ * not ask for them changes behaviour. The feed is a timer rather than the
+ * watchdog core's boot handler because that handler needs
+ * CONFIG_WATCHDOG_HANDLE_BOOT_ENABLED and CONFIG_WATCHDOG_OPEN_TIMEOUT=0.
+ */
+static bool arm_at_boot;
+static struct timer_list ping_timer;
+static struct watchdog_device *ping_wdd;
+
+static int __init nord4_wdt_arm_setup(char *str)
+{
+	return kstrtobool(str, &arm_at_boot);
+}
+early_param("nord4.wdt_arm", nord4_wdt_arm_setup);
+
+static void gunyah_wdt_ping_timer(struct timer_list *t)
+{
+	int ret = gunyah_wdt_ping(ping_wdd);
+
+	if (ret)
+		pr_crit("gunyah-wdt: ping failed (%d), the phone will reset\n",
+			ret);
+	mod_timer(t, jiffies + msecs_to_jiffies(ping_wdd->timeout * 1000 / 3));
+}
+
+/*
+ * nord4.hang=soft  spins with interrupts on (softlockup_panic makes it a
+ *                  panic, panic=5 resets);
+ * nord4.hang=irq   hangs every CPU with interrupts off, so only a hardware
+ *                  watchdog can recover it.
+ */
+static char *hang_mode;
+
+static int __init nord4_hang_setup(char *str)
+{
+	hang_mode = str;
+	return 0;
+}
+early_param("nord4.hang", nord4_hang_setup);
+
+static void nord4_hang_cpu(void *unused)
+{
+	local_irq_disable();
+	for (;;)
+		cpu_relax();
+}
+
+static int __init nord4_hang_init(void)
+{
+	if (!hang_mode)
+		return 0;
+
+	pr_emerg("nord4: deliberate test hang (%s); a watchdog reset must follow\n",
+		 hang_mode);
+
+	if (!strcmp(hang_mode, "soft")) {
+		for (;;)
+			cpu_relax();
+	}
+
+	smp_call_function(nord4_hang_cpu, NULL, 0);
+	local_irq_disable();
+	for (;;)
+		cpu_relax();
+}
+late_initcall(nord4_hang_init);
 
 static int gunyah_wdt_set_timeout(struct watchdog_device *wdd,
 				  unsigned int timeout_sec)
@@ -196,6 +279,21 @@ static int gunyah_wdt_probe(struct platform_device *pdev)
 	wdd->timeout = wdd->max_timeout;
 
 	gunyah_wdt_stop(wdd);
+
+	if (arm_at_boot) {
+		ret = gunyah_wdt_start(wdd);
+		if (ret)
+			dev_err(dev, "nord4.wdt_arm: start failed (%d)\n", ret);
+		else {
+			ping_wdd = wdd;
+			timer_setup(&ping_timer, gunyah_wdt_ping_timer, 0);
+			mod_timer(&ping_timer, jiffies +
+				  msecs_to_jiffies(wdd->timeout * 1000 / 3));
+			dev_info(dev, "armed at boot: %us timeout, ping every %us\n",
+				 wdd->timeout, wdd->timeout / 3);
+		}
+	}
+
 	platform_set_drvdata(pdev, wdd);
 	watchdog_set_restart_priority(wdd, 0);
 
@@ -206,6 +304,10 @@ static void gunyah_wdt_remove(struct platform_device *pdev)
 {
 	struct watchdog_device *wdd = platform_get_drvdata(pdev);
 
+	if (ping_wdd) {
+		del_timer_sync(&ping_timer);
+		ping_wdd = NULL;
+	}
 	gunyah_wdt_stop(wdd);
 }
 
