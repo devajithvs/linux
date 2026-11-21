@@ -350,6 +350,24 @@
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 
+		/*
+		 * L13B: the IR blaster's LED rail, 3.008 V. The downstream
+		 * consumer_ir_core node names L13B at 3008000 uV
+		 * (oplus/sensor/avalon-sensor-24211.dtsi:55-62), and the
+		 * overlay removes the SD card's reference to the same rail
+		 * (oplus/cliffs_overlay_common.dtsi:91-97). ir-spi-led looks
+		 * its supply up as "irda_regulator" while its binding declares
+		 * power-supply, so the rail is held on here rather than
+		 * switched per transmission.
+		 */
+		vreg_l13b_3p0: ldo13 {
+			regulator-name = "vreg_l13b_3p0";
+			regulator-min-microvolt = <3008000>;
+			regulator-max-microvolt = <3008000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+		};
+
 		/* L17B: eUSB2 repeater vdd3. 2700000-3300000 uV, init 3104000. */
 		vreg_l17b_3p3: ldo17 {
 			regulator-name = "vreg_l17b_3p3";
@@ -1470,6 +1488,54 @@
 
 		#sound-dai-cells = <0>;
 	};
+
+	/*
+	 * The alert slider's hall sensor: an AKM AK09970 at 0x10 on this same
+	 * SE0 bus, interrupt on GPIO 136, supplied from L11B at 1.8 V
+	 * (F0284; the vendor node is oplus/tp/avalon-oplus-tp-24211.dtsi:33-55
+	 * and the base DTB keeps i2c@a80000 enabled). The slider magnet moves
+	 * along the sensor's Y axis; the two raw readings below separate the
+	 * three detents. The input layer reports them on ABS_SND_PROFILE, the
+	 * convention the OnePlus 6 GPIO slider uses.
+	 */
+	slider@10 {
+		compatible = "oneplus,alert-slider-ak09970";
+		reg = <0x10>;
+
+		interrupt-parent = <&tlmm>;
+		interrupts = <136 IRQ_TYPE_EDGE_RISING>;
+
+		pinctrl-0 = <&hall_int_default>;
+		pinctrl-names = "default";
+
+		oneplus,axis = "x";
+		oneplus,position-thresholds = <(-4700) 4000>;
+		oneplus,position-map = <SND_PROFILE_RING SND_PROFILE_VIBRATE SND_PROFILE_SILENT>;
+	};
+};
+
+/*
+ * The IR blaster. The vendor driver is oplus_sensor_kookong_ir_spi.ko, whose
+ * only output is the SPI MOSI line; the shipped DTBO puts it at chip select 0
+ * of qupv3_se11_spi (dtbo_b_0.dts fragment@68, alias qupv3_se11_spi = spi@88c000,
+ * spi-max-frequency 5 MHz) and muxes only GPIO 45 as qup1_se3_l1
+ * (fragment@67). The LED rail is L13B at 3.008 V (oplus/sensor/
+ * avalon-sensor-24211.dtsi:55-62). ir-spi-led drives the LED straight from
+ * MOSI, so the CLK, MISO and CS pads stay in their board functions.
+ */
+&spi11 {
+	status = "okay";
+
+	pinctrl-0 = <&ir_spi_mosi>;
+	pinctrl-names = "default";
+
+	ir@0 {
+		compatible = "ir-spi-led";
+		reg = <0>;
+
+		spi-max-frequency = <5000000>;
+		power-supply = <&vreg_l13b_3p0>;
+	};
 };
 
 /*
@@ -1548,6 +1614,22 @@
 };
 
 &tlmm {
+	/* The IR blaster's MOSI pad: the only line the LED uses. */
+	ir_spi_mosi: ir-spi-mosi-state {
+		pins = "gpio45";
+		function = "qup1_se3";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	/* The hall sensor's INT output, a push-pull active-high line. */
+	hall_int_default: hall-int-default-state {
+		pins = "gpio136";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
 	/*
 	 * The interrupt line as the downstream board file configures it
 	 * (oplus-misc-24211.dtsi:15-30): 2 mA, input, pulled up. Its
