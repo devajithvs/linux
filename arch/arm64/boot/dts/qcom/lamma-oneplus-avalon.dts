@@ -1784,5 +1784,4 @@
 };
 
 /* --- camera bring-up staging (results/device/2026-11-22-camera/stage.sh) --- */
-&camss { status = "disabled"; };
 /* --- end camera bring-up staging --- */
