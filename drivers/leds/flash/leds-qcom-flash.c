@@ -167,6 +167,8 @@ static const struct reg_field mvflash_4ch_regs[REG_MAX_COUNT] = {
 
 struct qcom_flash_data {
 	struct v4l2_flash	**v4l2_flash;
+	struct regmap		*regmap;
+	u32			reg_base;
 	struct regmap_field     *r_fields[REG_MAX_COUNT];
 	struct mutex		lock;
 	enum hw_type		hw_type;
@@ -191,6 +193,20 @@ struct qcom_flash_led {
 	u8				chan_count;
 	bool				enabled;
 };
+
+/*
+ * Test hook for the LED switch (F0293, F0361). Downstream's qpnp-flash-v2
+ * enables the LEDs at 0x4c (per-LED bits) and sets the current resolution at
+ * 0x47, while this driver enables them at 0x4e and sets 0x49; a dump of the
+ * module while a torch was on (F0361) shows this driver's write landing but no
+ * light, and neither map is proven on this part. With this parameter set, the
+ * torch enable also writes the downstream registers, so one boot settles which
+ * map the silicon answers to. Default off: no image that does not set it
+ * changes behaviour.
+ */
+static bool switch_test;
+module_param(switch_test, bool, 0644);
+MODULE_PARM_DESC(switch_test, "also write the downstream LED-enable (0x4c) and IRES (0x47) registers on torch on");
 
 static int set_flash_module_en(struct qcom_flash_led *led, bool en)
 {
@@ -615,6 +631,20 @@ static int qcom_flash_led_brightness_set(struct led_classdev *led_cdev,
 	if (rc)
 		return rc;
 
+	if (enable && switch_test) {
+		struct qcom_flash_data *fd = led->flash_data;
+		u8 mask = 0;
+		int i;
+
+		for (i = 0; i < led->chan_count; i++)
+			mask |= BIT(led->chan_id[i]);
+		regmap_write(fd->regmap, fd->reg_base + 0x4c, mask);
+		regmap_write(fd->regmap, fd->reg_base + 0x47, 0xff);
+		dev_info(led_cdev->dev,
+			 "switch_test: wrote 0x4c=%02x 0x47=ff for channels %02x\n",
+			 mask, mask);
+	}
+
 	return set_flash_strobe(led, SW_STROBE, enable);
 }
 
@@ -921,6 +951,9 @@ static int qcom_flash_led_probe(struct platform_device *pdev)
 		return rc;
 	}
 	devm_kfree(dev, regs); /* devm_regmap_field_bulk_alloc() makes copies */
+
+	flash_data->regmap = regmap;
+	flash_data->reg_base = reg_base;
 
 	platform_set_drvdata(pdev, flash_data);
 	mutex_init(&flash_data->lock);
