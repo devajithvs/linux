@@ -14,12 +14,14 @@
 #include <linux/backlight.h>
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
+#include <linux/minmax.h>
 #include <linux/module.h>
 #include <linux/regulator/consumer.h>
 
 #include <drm/display/drm_dsc.h>
 #include <drm/display/drm_dsc_helper.h>
 
+#include <drm/drm_crtc.h>
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_modes.h>
 #include <drm/drm_panel.h>
@@ -33,6 +35,7 @@ struct aa553_panel {
 	struct drm_dsc_config dsc;
 	struct gpio_desc *reset_gpio;
 	struct regulator_bulk_data *supplies;
+	struct drm_connector *connector;
 	bool prepared;
 };
 
@@ -261,6 +264,79 @@ static int aa553_off(struct aa553_panel *ctx)
 }
 
 /*
+ * qcom,mdss-dsi-timing-switch-command for the three timing nodes
+ * (dsi-panel-AA553-P-7-A0001-dsc-cmd.dtsi:80-89, 331-340, 455-464).
+ * The six entries of each array are 0x2F <rate>, a page-0 switch, and the
+ * page-0 em-duty pair; the byte the vendor generator put in the ack field
+ * (0x60, 0x20) is not a wait: the wait field (byte 4) is 0 in all six
+ * (Documentation/devicetree/bindings/fb/mdss-dsi-panel.txt, byte 4 "wait
+ * number of specified ms").  The on-command's own 120 Hz writes are
+ * 0x2F/0x6F/0xDF too, so a switch is the same three registers.
+ */
+struct aa553_refresh {
+	unsigned int vrefresh;
+	u8 frame_rate;		/* DCS 0x2F: 01 = 120, 02 = 90, 03 = 60 Hz */
+	u8 em_duty_31;
+	u8 em_duty_38[2];
+};
+
+static const struct aa553_refresh aa553_refresh[] = {
+	{ 120, 0x01, 0x20, { 0x0a, 0xec } },
+	{  90, 0x02, 0x21, { 0x0e, 0x94 } },
+	{  60, 0x03, 0x22, { 0x15, 0xe0 } },
+};
+
+/*
+ * The rate KMS selected is not handed to a drm_panel.  A mode change makes
+ * the atomic helpers disable and re-enable the whole bridge chain, so
+ * .prepare() runs again, and by then drm_atomic_helper_swap_state() has put
+ * the new mode into the connector's state.  Read the adjusted mode from
+ * there and send the timing switch after the init table, which is the 120 Hz
+ * table.
+ */
+static int aa553_apply_refresh_rate(struct aa553_panel *ctx)
+{
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
+	const struct drm_display_mode *mode;
+	const struct aa553_refresh *rate = NULL;
+	unsigned int vrefresh = 120;
+	unsigned int i;
+
+	if (ctx->connector && ctx->connector->state && ctx->connector->state->crtc) {
+		mode = &ctx->connector->state->crtc->state->adjusted_mode;
+		if (mode->htotal && mode->vtotal)
+			vrefresh = drm_mode_vrefresh(mode);
+	}
+
+	for (i = 0; i < ARRAY_SIZE(aa553_refresh); i++) {
+		if (aa553_refresh[i].vrefresh == vrefresh) {
+			rate = &aa553_refresh[i];
+			break;
+		}
+	}
+
+	if (!rate) {
+		dev_warn(ctx->panel.dev,
+			 "%u Hz is not one of the panel's modes; leaving 120 Hz\n",
+			 vrefresh);
+		return 0;
+	}
+
+	if (rate->vrefresh == 120)
+		return 0;	/* the init table already programmed 120 Hz */
+
+	mipi_dsi_dcs_write_var_seq_multi(&dsi_ctx, 0x2f, rate->frame_rate);
+	aa553_switch_page(&dsi_ctx, 0x00);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x31);
+	mipi_dsi_dcs_write_var_seq_multi(&dsi_ctx, 0xdf, rate->em_duty_31);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x38);
+	mipi_dsi_dcs_write_var_seq_multi(&dsi_ctx, 0xdf, rate->em_duty_38[0],
+					 rate->em_duty_38[1]);
+
+	return dsi_ctx.accum_err;
+}
+
+/*
  * Rail order and delays are the downstream supply entries
  * (audi-23803-display-cliffs-overlay.dtsi:21-43): vddio, then its 2 ms
  * post-on and vci's 1 ms pre-on, then vci, then 15 ms, then the panel's
@@ -329,9 +405,15 @@ static int aa553_prepare(struct drm_panel *panel)
 	 * The init table is sent in low-power mode
 	 * (qcom,mdss-dsi-on-command-state = "dsi_lp_mode") but everything
 	 * after it, the brightness writes included, is high-speed
-	 * (qcom,bl-dsc-cmd-state = "dsi_hs_mode").
+	 * (qcom,bl-dsc-cmd-state = "dsi_hs_mode").  The timing switch is
+	 * high-speed too (qcom,mdss-dsi-timing-switch-command-state).
 	 */
 	ctx->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+
+	ret = aa553_apply_refresh_rate(ctx);
+	if (ret < 0)
+		goto err_disable;
+
 	ctx->prepared = true;
 
 	return 0;
@@ -361,25 +443,94 @@ static int aa553_unprepare(struct drm_panel *panel)
 	return 0;
 }
 
-static const struct drm_display_mode aa553_mode = {
-	/* (1240 + 64 + 8 + 50) * (2772 + 2 + 2 + 8) * 120 / 1000 */
-	.clock = (1240 + 64 + 8 + 50) * (2772 + 2 + 2 + 8) * 120 / 1000,
-	.hdisplay = 1240,
-	.hsync_start = 1240 + 64,
-	.hsync_end = 1240 + 64 + 8,
-	.htotal = 1240 + 64 + 8 + 50,
-	.vdisplay = 2772,
-	.vsync_start = 2772 + 2,
-	.vsync_end = 2772 + 2 + 2,
-	.vtotal = 2772 + 2 + 2 + 8,
-	.width_mm = 70,
-	.height_mm = 156,
-	.type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED,
+/*
+ * The three timing nodes of the vendor panel DT, same resolution and DSC
+ * geometry, per-mode porches (dsi-panel-AA553-P-7-A0001-dsc-cmd.dtsi
+ * timing@ nodes; survey in results/display-panel-modes/survey.txt §1):
+ *
+ *   rate  hfp  hsw  hbp  vfp  vsw  vbp   htotal vtotal
+ *   120    64    8   50    2    2    8    1362   2784
+ *    90    64    8   80   10    2   16    1392   2800
+ *    60   100    8  120   20    2   30    1468   2824
+ *
+ * The 60 Hz node also has qcom,mdss-dsi-h-sync-skew = <1>; DRM has no field
+ * for it and the vendor's own frame pixel rate ignores it.
+ */
+static const struct drm_display_mode aa553_modes[] = {
+	{
+		/* (1240 + 64 + 8 + 50) * (2772 + 2 + 2 + 8) * 120 / 1000 */
+		.clock = (1240 + 64 + 8 + 50) * (2772 + 2 + 2 + 8) * 120 / 1000,
+		.hdisplay = 1240,
+		.hsync_start = 1240 + 64,
+		.hsync_end = 1240 + 64 + 8,
+		.htotal = 1240 + 64 + 8 + 50,
+		.vdisplay = 2772,
+		.vsync_start = 2772 + 2,
+		.vsync_end = 2772 + 2 + 2,
+		.vtotal = 2772 + 2 + 2 + 8,
+		.width_mm = 70,
+		.height_mm = 156,
+		.type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED,
+	},
+	{
+		/* (1240 + 64 + 8 + 80) * (2772 + 10 + 2 + 16) * 90 / 1000 */
+		.clock = (1240 + 64 + 8 + 80) * (2772 + 10 + 2 + 16) * 90 / 1000,
+		.hdisplay = 1240,
+		.hsync_start = 1240 + 64,
+		.hsync_end = 1240 + 64 + 8,
+		.htotal = 1240 + 64 + 8 + 80,
+		.vdisplay = 2772,
+		.vsync_start = 2772 + 10,
+		.vsync_end = 2772 + 10 + 2,
+		.vtotal = 2772 + 10 + 2 + 16,
+		.width_mm = 70,
+		.height_mm = 156,
+		.type = DRM_MODE_TYPE_DRIVER,
+	},
+	{
+		/* (1240 + 100 + 8 + 120) * (2772 + 20 + 2 + 30) * 60 / 1000 */
+		.clock = (1240 + 100 + 8 + 120) * (2772 + 20 + 2 + 30) * 60 / 1000,
+		.hdisplay = 1240,
+		.hsync_start = 1240 + 100,
+		.hsync_end = 1240 + 100 + 8,
+		.htotal = 1240 + 100 + 8 + 120,
+		.vdisplay = 2772,
+		.vsync_start = 2772 + 20,
+		.vsync_end = 2772 + 20 + 2,
+		.vtotal = 2772 + 20 + 2 + 30,
+		.width_mm = 70,
+		.height_mm = 156,
+		.type = DRM_MODE_TYPE_DRIVER,
+	},
 };
 
 static int aa553_get_modes(struct drm_panel *panel, struct drm_connector *connector)
 {
-	return drm_connector_helper_get_modes_fixed(connector, &aa553_mode);
+	struct aa553_panel *ctx = to_aa553_panel(panel);
+	unsigned int i;
+	int count = 0;
+
+	connector->display_info.width_mm = aa553_modes[0].width_mm;
+	connector->display_info.height_mm = aa553_modes[0].height_mm;
+
+	for (i = 0; i < ARRAY_SIZE(aa553_modes); i++) {
+		struct drm_display_mode *mode;
+
+		mode = drm_mode_duplicate(connector->dev, &aa553_modes[i]);
+		if (!mode) {
+			if (!count)
+				return -ENOMEM;
+			break;
+		}
+		drm_mode_set_name(mode);
+		drm_mode_probed_add(connector, mode);
+		count++;
+	}
+
+	/* .prepare() keys the DDIC's frame rate on this connector's mode. */
+	ctx->connector = connector;
+
+	return count;
 }
 
 /*
@@ -422,10 +573,22 @@ static const struct drm_panel_funcs aa553_panel_funcs = {
  * mipi_dsi_dcs_set_display_brightness()), so the panel receives the level
  * big-endian - which is what the _large() helper sends.  A complement
  * (max - level) would put the top of the scale at DBV 0.
+ *
+ * The raw DBV range is 0..3999, but the panel's normal band ends at 3238
+ * (oplus,dsi-bl-normal-max-level, dsi-panel-AA553-P-7-A0001-dsc-cmd.dtsi and
+ * ...-common.dtsi).  Above 3238 the stock stack does not send a larger DBV:
+ * it sends the HBM command sets (hbm-on/hbm-max and the B6 tune), whose
+ * mapping is not in these files.  Keep the raw range and clamp the top here,
+ * so userspace's 0..3999 scale cannot walk into a level the panel would show
+ * differently; HBM above 3238 needs its own property
+ * (docs/plans/panel-modes.md).
  */
+#define AA553_BL_NORMAL_MAX	3238
+
 static int aa553_bl_update_status(struct backlight_device *bl)
 {
 	struct aa553_panel *ctx = bl_get_data(bl);
+	int level = backlight_get_brightness(bl);
 
 	/*
 	 * Outside prepare()/unprepare() the rails are down and the panel does
@@ -437,7 +600,7 @@ static int aa553_bl_update_status(struct backlight_device *bl)
 		return 0;
 
 	return mipi_dsi_dcs_set_display_brightness_large(ctx->dsi,
-			backlight_get_brightness(bl));
+			min(level, AA553_BL_NORMAL_MAX));
 }
 
 static const struct backlight_ops aa553_bl_ops = {
