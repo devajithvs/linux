@@ -1504,6 +1504,17 @@
 		reg = <0 3>;
 
 		qcom,tx-port-mapping = <2 2 3 4>;
+
+		/*
+		 * Static channel mapping between the slave's TX port channels
+		 * and the master's, in the slave's order: adc1, adc2, adc3,
+		 * mic0, dmic1, mbhc, dmic2, dmic3, dmic4..7.  The slave driver
+		 * defaults each channel's master mask to its own channel bit
+		 * (wcd-common.h:23-28); this table is what qcm6490-idp.dts
+		 * declares for the same codec on the same TX macro, so the
+		 * masks are the pair the reference board runs with.
+		 */
+		qcom,tx-channel-mapping = /bits/ 8 <1 2 1 1 2 3 3 4 1 2 3 4>;
 	};
 };
 
