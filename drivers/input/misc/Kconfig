@@ -137,6 +137,18 @@ config INPUT_AW86927
 	  To compile this driver as a module, choose M here: the
 	  module will be called aw86927.
 
+config INPUT_ONEPLUS_ALERT_SLIDER
+	tristate "OnePlus alert slider on an AK09970 hall sensor"
+	depends on I2C && INPUT
+	help
+	  Say Y here to report the three-position alert slider of OnePlus
+	  phones that carry it as an AK09970 3-axis hall sensor on an I2C
+	  bus. The driver polls one axis and reports SND_PROFILE_SILENT,
+	  SND_PROFILE_VIBRATE or SND_PROFILE_RING on EV_ABS/ABS_SND_PROFILE.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called oneplus-alert-slider.
+
 config INPUT_BBNSM_PWRKEY
 	tristate "NXP BBNSM Power Key Driver"
 	depends on ARCH_MXC || COMPILE_TEST

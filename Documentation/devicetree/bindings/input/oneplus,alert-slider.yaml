@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/input/oneplus,alert-slider.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: OnePlus three-position alert slider on an AK09970 hall sensor
+
+maintainers:
+  - Devajith <devajithvs@gmail.com>
+
+description: |
+  Several OnePlus phones carry their alert slider as a magnet that moves past
+  an AKM AK09970 3-axis hall sensor on an I2C bus. Each of the three detents
+  holds the magnet at a different place along one sensor axis, so a raw
+  reading of that axis identifies the position.
+
+  The driver reports the position on the input ABS_SND_PROFILE axis as
+  SND_PROFILE_SILENT, SND_PROFILE_VIBRATE or SND_PROFILE_RING, the same
+  convention the OnePlus 6 GPIO slider uses (arch/arm64/boot/dts/qcom/
+  sdm845-oneplus-common.dtsi).
+
+properties:
+  compatible:
+    const: oneplus,alert-slider-ak09970
+
+  reg:
+    maxItems: 1
+
+  interrupts:
+    maxItems: 1
+    description: The sensor's INT output.
+
+  vcc-supply:
+    description: |
+      1.8 V supply of the sensor, if Linux may switch it. The Nord 4's
+      bootloader leaves the rail on, and its RPMH enable does not complete
+      from Linux, so the board omits this and the driver treats it as
+      optional.
+
+  oneplus,axis:
+    enum: [x, y, z]
+    description: Sensor axis along which the slider magnet moves.
+
+  oneplus,axis-weights:
+    $ref: /schemas/types.yaml#/definitions/int32-array
+    minItems: 3
+    maxItems: 3
+    description: |
+      Raw X, Y and Z weights of the value the bands are measured on. The
+      default is a unit weight on oneplus,axis. The Nord 4 uses <-1 0 1>
+      (Z minus X): the magnet's Z and X fields separate middle from bottom
+      where either alone does not.
+
+  oneplus,position-thresholds:
+    $ref: /schemas/types.yaml#/definitions/int32-array
+    minItems: 2
+    maxItems: 2
+    description: |
+      Two readings of the weighted axis value, in ascending order, that bound
+      the low, middle and high bands.
+
+  oneplus,position-map:
+    $ref: /schemas/types.yaml#/definitions/uint32-array
+    minItems: 3
+    maxItems: 3
+    description: |
+      The SND_PROFILE_* value reported for the low, middle and high raw
+      band. Defaults to the identity (SILENT, VIBRATE, RING). The magnet
+      does not have to cross the bands in physical order: on the Nord 4 the
+      low band is the middle detent, the middle band the bottom detent and
+      the high band the top detent.
+
+required:
+  - compatible
+  - reg
+  - oneplus,axis
+  - oneplus,position-thresholds
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/interrupt-controller/irq.h>
+
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        slider@10 {
+            compatible = "oneplus,alert-slider-ak09970";
+            reg = <0x10>;
+            interrupts-extended = <&tlmm 136 IRQ_TYPE_EDGE_RISING>;
+            oneplus,axis = "x";
+            oneplus,position-thresholds = <(-4700) 4000>;
+            oneplus,position-map = <SND_PROFILE_RING
+                                   SND_PROFILE_VIBRATE
+                                   SND_PROFILE_SILENT>;
+        };
+    };
