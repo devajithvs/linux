@@ -622,9 +622,14 @@ static int tfa987x_configure(struct tfa987x_priv *priv)
 	if (ret)
 		return ret;
 
-	ret = tfa987x_wait_clks(priv);
-	if (ret)
-		return ret;
+	/*
+	 * The DSP may not be driving the interface yet: the bit clock is voted
+	 * in the CPU DAI's hw_params and the I2S endpoint starts with the
+	 * graph.  A timeout here is not fatal; tfa987x_unmute() waits again
+	 * with the stream running.
+	 */
+	if (tfa987x_wait_clks(priv))
+		dev_info(priv->dev, "no clock yet, waiting until the stream starts\n");
 
 	priv->configured = true;
 	dev_info(priv->dev, "configured, profile %d (%s) at %u Hz\n",
@@ -643,11 +648,11 @@ static int tfa987x_unmute(struct tfa987x_priv *priv)
 	if (ret)
 		return ret;
 
-	ret = tfa987x_bf_write(priv, BF_MANSCONF, 1);
+	ret = tfa987x_wait_clks(priv);
 	if (ret)
 		return ret;
 
-	ret = tfa987x_wait_clks(priv);
+	ret = tfa987x_bf_write(priv, BF_MANSCONF, 1);
 	if (ret)
 		return ret;
 
