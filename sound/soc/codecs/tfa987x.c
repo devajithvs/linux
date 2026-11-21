@@ -179,11 +179,13 @@ static const char *cnt_string(struct tfa987x_priv *priv, size_t off)
 /* the device list whose I2C address is this amplifier's */
 static int cnt_find_dev(struct tfa987x_priv *priv)
 {
-	u16 ndev = get_unaligned_le16(priv->fw->data + 0x28);
+	u16 ndev;
 	int i;
 
 	if (priv->fw->size < TFA_CNT_HDR_LEN)
 		return -EINVAL;
+
+	ndev = get_unaligned_le16(priv->fw->data + 0x28);
 
 	for (i = 0; i < ndev; i++) {
 		size_t off, doff;
@@ -281,7 +283,7 @@ static unsigned int cnt_profile_audfs(struct tfa987x_priv *priv, int idx)
 
 		if (cnt_desc(priv, poff + 8 + 4 * i, &doff, &type))
 			return 0;
-		if (type != DSC_BITFIELD)
+		if (type != DSC_BITFIELD || !cnt_has(priv, doff, 4))
 			continue;
 		if (get_unaligned_le16(priv->fw->data + doff + 2) == BF_AUDFS)
 			return get_unaligned_le16(priv->fw->data + doff);
