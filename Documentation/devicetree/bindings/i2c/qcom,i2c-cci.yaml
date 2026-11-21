@@ -28,6 +28,7 @@ properties:
           - enum:
               - qcom,glymur-cci
               - qcom,kaanapali-cci
+              - qcom,lamma-cci
               - qcom,milos-cci
               - qcom,qcm2290-cci
               - qcom,qcs8300-cci

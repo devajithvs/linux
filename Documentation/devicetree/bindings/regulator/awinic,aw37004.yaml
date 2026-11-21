@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: (GPL-2.0 OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/regulator/awinic,aw37004.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Awinic AW37004 Four-Channel LDO PMIC
+
+maintainers:
+  - Devajith V S <devajithvs@gmail.com>
+
+description: |
+  The AW37004 is a four-channel LDO PMIC for camera modules: two DVDD
+  outputs in the 0.6-1.8 V range and two AVDD outputs in the 1.2-4.3 V
+  range, programmed over I2C.
+
+properties:
+  compatible:
+    const: awinic,aw37004
+
+  reg:
+    maxItems: 1
+
+patternProperties:
+  "^dvdd[12]$|^avdd[12]$":
+    type: object
+    $ref: regulator.yaml#
+    unevaluatedProperties: false
+    description:
+      Properties for a single regulator output.
+
+    required:
+      - regulator-name
+
+required:
+  - compatible
+  - reg
+  - dvdd1
+  - dvdd2
+  - avdd1
+  - avdd2
+
+additionalProperties: false
+
+examples:
+  - |
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        regulator@28 {
+            compatible = "awinic,aw37004";
+            reg = <0x28>;
+
+            dvdd1 {
+                regulator-name = "cam_dvdd1";
+                regulator-min-microvolt = <1050000>;
+                regulator-max-microvolt = <1050000>;
+            };
+
+            dvdd2 {
+                regulator-name = "cam_dvdd2";
+                regulator-min-microvolt = <1200000>;
+                regulator-max-microvolt = <1200000>;
+            };
+
+            avdd1 {
+                regulator-name = "cam_avdd1";
+                regulator-min-microvolt = <2800000>;
+                regulator-max-microvolt = <2800000>;
+            };
+
+            avdd2 {
+                regulator-name = "cam_avdd2";
+                regulator-min-microvolt = <2800000>;
+                regulator-max-microvolt = <2800000>;
+            };
+        };
+    };
+...
