@@ -132,6 +132,7 @@ struct tfa987x_priv {
 	struct mutex lock;
 	int profile;
 	bool configured;
+	bool running;
 	unsigned int rate;
 };
 
@@ -591,6 +592,7 @@ static int tfa987x_unmute(struct tfa987x_priv *priv)
 	if (ret)
 		return ret;
 
+	priv->running = true;
 	tfa987x_show_status(priv, "unmute");
 
 	return 0;
@@ -600,11 +602,17 @@ static int tfa987x_mute(struct tfa987x_priv *priv)
 {
 	int ret;
 
+	/* Read the amplifier's own state first: this is the last moment the
+	 * device is still running, so it is the record of what the stream did.
+	 */
+	if (priv->running)
+		tfa987x_show_status(priv, "running");
+
 	ret = tfa987x_bf_write(priv, BF_AMPE, 0);
 	if (ret)
 		return ret;
 
-	tfa987x_show_status(priv, "mute");
+	priv->running = false;
 
 	return 0;
 }
