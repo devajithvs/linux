@@ -74,6 +74,8 @@
 #define BF_SWS		0x11d0	/* amplifier engage */
 #define BF_AMPS		0x11e0	/* amplifier enable */
 #define BF_AREFS	0x11f0	/* references enable */
+#define BF_FSSYNCEN	0x0480	/* FS synchronisation of the clock divider */
+#define BF_MTPK		0xa107	/* MTP KEY2 register */
 
 #define BF_REG(f)	((f) >> 8)
 #define BF_POS(f)	(((f) >> 4) & 0xf)
@@ -111,6 +113,22 @@ static int rate_to_audfs(unsigned int rate)
 	}
 }
 
+/* the part's own optimal settings, tfa_init_v6.c:tfa9873_specific() */
+static const struct {
+	u8 reg;
+	u16 val;
+} tfa987x_init_0b73[] = {
+	{ 0x02, 0x0628 },	/* AUDFS 8 (48 kHz), FRACTDEL 0x31 */
+	{ 0x61, 0x0183 },
+	{ 0x63, 0x005a },
+	{ 0x6f, 0x0082 },
+	{ 0x70, 0xa3eb },
+	{ 0x73, 0x0187 },
+	{ 0x83, 0x071c },
+	{ 0x85, 0x0380 },
+	{ 0xd5, 0x004d },
+};
+
 /**
  * struct tfa987x_priv - one amplifier
  * @dev: this amplifier's device
@@ -130,6 +148,7 @@ struct tfa987x_priv {
 	unsigned int addr;
 	size_t dev_off;
 	struct mutex lock;
+	unsigned int rev;
 	int profile;
 	bool configured;
 	bool running;
@@ -448,6 +467,48 @@ static int tfa987x_write_list(struct tfa987x_priv *priv, size_t off, u8 len,
 	return 0;
 }
 
+/*
+ * The keys guard the MTP and the analog trim registers; NXP's own init unlocks
+ * them, writes the part's revision-specific table and locks them again
+ * (tfa_init_v6.c:tfa9873_specific(), tfa98xx_key2_v6()).  Without the table the
+ * amplifier keeps its POR analog and DCDC settings.
+ */
+static int tfa987x_init_part(struct tfa987x_priv *priv)
+{
+	unsigned int value;
+	int i, ret;
+
+	ret = regmap_write(priv->regmap, 0x0f, 0x5a6b);
+	if (ret)
+		return ret;
+	ret = regmap_read(priv->regmap, 0xfb, &value);
+	if (ret)
+		return ret;
+	ret = regmap_write(priv->regmap, 0xa0, value ^ 0x005a);
+	if (ret)
+		return ret;
+	ret = tfa987x_bf_write(priv, BF_MTPK, 0x5a);
+	if (ret)
+		return ret;
+	ret = regmap_write(priv->regmap, 0x0f, 0);
+	if (ret)
+		return ret;
+
+	if (priv->rev != 0x0b73) {
+		dev_warn(priv->dev, "no optimal settings for rev 0x%04x\n",
+			 priv->rev);
+	} else {
+		for (i = 0; i < ARRAY_SIZE(tfa987x_init_0b73); i++) {
+			ret = regmap_write(priv->regmap, tfa987x_init_0b73[i].reg,
+					   tfa987x_init_0b73[i].val);
+			if (ret)
+				return ret;
+		}
+	}
+
+	return tfa987x_bf_write(priv, BF_FSSYNCEN, 0);
+}
+
 static int tfa987x_write_dev_regs(struct tfa987x_priv *priv)
 {
 	const u8 *buf = priv->fw->data;
@@ -537,6 +598,12 @@ static int tfa987x_configure(struct tfa987x_priv *priv)
 	if (ret)
 		return ret;
 	usleep_range(1000, 2000);
+
+	ret = tfa987x_init_part(priv);
+	if (ret) {
+		dev_err(priv->dev, "part init failed: %d\n", ret);
+		return ret;
+	}
 
 	ret = tfa987x_write_dev_regs(priv);
 	if (ret) {
@@ -817,6 +884,8 @@ static int tfa987x_i2c_probe(struct i2c_client *client)
 	ret = regmap_read(priv->regmap, TFA987X_REG_REVISION, &rev);
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to read the revision\n");
+
+	priv->rev = rev;
 
 	switch (rev & 0xff) {
 	case TFA9873_ID:
