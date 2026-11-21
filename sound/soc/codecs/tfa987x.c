@@ -41,6 +41,7 @@
 #include <linux/regulator/consumer.h>
 #include <linux/unaligned.h>
 #include <linux/string.h>
+#include <sound/pcm_params.h>
 #include <sound/soc.h>
 
 #define TFA987X_REG_STATUS1	0x10
@@ -207,7 +208,7 @@ static int cnt_find_dev(struct tfa987x_priv *priv)
 	ndev = get_unaligned_le16(priv->fw->data + 0x28);
 
 	for (i = 0; i < ndev; i++) {
-		size_t off, doff;
+		size_t off;
 		u8 type;
 		u8 addr;
 
