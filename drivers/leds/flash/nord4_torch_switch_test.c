@@ -49,6 +49,23 @@ static const struct kernel_param_ops read_now_ops = {
 };
 module_param_cb(read_now, &read_now_ops, NULL, 0200);
 
+static void dump_map(const char *tag)
+{
+	char line[160];
+	unsigned int v;
+	int r, n;
+
+	for (r = 0; r < 0x80; r += 8) {
+		n = scnprintf(line, sizeof(line), "nord4-torch-switch: %s %#04x:", tag, base + r);
+		for (int k = 0; k < 8; k++) {
+			if (regmap_read(regmap, base + r + k, &v))
+				v = 0xff;
+			n += scnprintf(line + n, sizeof(line) - n, " %02x", v & 0xff);
+		}
+		pr_info("%s\n", line);
+	}
+}
+
 static void dump(const char *tag)
 {
 	unsigned int sw = 0, mod = 0, ch = 0;
@@ -61,6 +78,7 @@ static void dump(const char *tag)
 	}
 	pr_info("nord4-torch-switch: %s switch(%#x)=%#02x mod(%#x)=%#02x chan(%#x)=%#02x\n",
 		tag, SWITCH_REG, sw & 0xff, MOD_REG, mod & 0xff, CHAN_REG, ch & 0xff);
+	dump_map(tag);
 }
 
 static int __init nord4_torch_switch_init(void)
