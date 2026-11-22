@@ -779,6 +779,13 @@ static int tfa987x_unmute(struct tfa987x_priv *priv)
 	if (ret)
 		return ret;
 
+	/*
+	 * The DCDC needs a moment to start, and its "active" bit is sticky and
+	 * clears on read: sample it once before the log line takes it away.
+	 */
+	msleep(200);
+	tfa987x_show_status(priv, "unmute +200 ms");
+
 	priv->running = true;
 	tfa987x_show_status(priv, "unmute");
 
