@@ -229,31 +229,6 @@
 		};
 
 		/*
-		 * Capture: the WCD9370's ADCs leave the codec on the TX
-		 * SoundWire slave (swr2, the TX macro's master) and reach the
-		 * LPASS through the RXTX codec DMA's TX3 port.  The same link
-		 * shape as qcm6490-idp.dts's wcd-capture-dai-link, whose codec
-		 * is this one; the codec's first DAI is the RX, the second the
-		 * TX (wcd937x.c's wcd937x_dais[]).
-		 */
-		wcd-capture-dai-link {
-			link-name = "WCD Capture";
-
-			cpu {
-				sound-dai = <&q6apmbedai TX_CODEC_DMA_TX_3>;
-			};
-
-			codec {
-				sound-dai = <&wcd937x 1>, <&swr2 0>,
-					    <&lpass_txmacro 0>;
-			};
-
-			platform {
-				sound-dai = <&q6apm>;
-			};
-		};
-
-		/*
 		 * Both amplifiers are fed from the same MI2S: downstream's
 		 * oplus,speaker-i2s-id = <1> is the secondary MI2S, whose
 		 * SCK/WS/SD0/SD1 are the TLMM i2s1 states above
