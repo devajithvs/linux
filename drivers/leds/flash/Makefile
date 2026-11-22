@@ -14,3 +14,5 @@ obj-$(CONFIG_LEDS_S2M_FLASH)	+= leds-s2m-flash.o
 obj-$(CONFIG_LEDS_SGM3140)	+= leds-sgm3140.o
 obj-$(CONFIG_LEDS_SY7802)	+= leds-sy7802.o
 obj-$(CONFIG_LEDS_TPS6131X)	+= leds-tps6131x.o
+# Test-only, no Kconfig symbol: built only by an explicit --modules target.
+obj-m				+= nord4_torch_switch_test.o
