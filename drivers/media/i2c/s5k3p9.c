@@ -74,6 +74,12 @@ static const struct s5k3p9_reg s5k3p9_mode_regs[] = {
 	/* 4608x3456 10-bit; TODO: the vendor sequence */
 };
 
+static const struct regmap_config s5k3p9_regmap_config = {
+	.reg_bits = 16,
+	.val_bits = 8,
+	.max_register = 0xffff,
+};
+
 struct s5k3p9_mode {
 	u32 width;
 	u32 height;
@@ -105,7 +111,7 @@ struct s5k3p9 {
 
 	const struct s5k3p9_mode *mode;
 	struct v4l2_mbus_framefmt fmt;
-	u32 link_freq_bitmap;
+	unsigned long link_freq_bitmap;
 	bool streaming;
 };
 
@@ -330,11 +336,7 @@ static int s5k3p9_probe(struct i2c_client *client)
 	sensor->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 	sensor->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
 
-	sensor->regmap = devm_regmap_init_i2c(client, &(const struct regmap_config) {
-		.reg_bits = 16,
-		.val_bits = 8,
-		.max_register = 0xffff,
-	});
+	sensor->regmap = devm_regmap_init_i2c(client, &s5k3p9_regmap_config);
 	if (IS_ERR(sensor->regmap))
 		return dev_err_probe(dev, PTR_ERR(sensor->regmap),
 				     "failed to init regmap\n");
