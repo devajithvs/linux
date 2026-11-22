@@ -101,9 +101,9 @@ static int sc8280xp_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 		fallthrough;
 	default:
 		/*
-		 * The format mask is a set of bits, not one value: leave it
-		 * untouched and params_format() reports the lowest set bit, so
-		 * the sixteen-bit default has to replace the set, not join it.
+		 * snd_mask_set_format() sets a bit and leaves the rest, and
+		 * params_format() reports the lowest set bit: the default has
+		 * to replace the set, not join it.
 		 */
 		snd_mask_none(fmt);
 		snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
