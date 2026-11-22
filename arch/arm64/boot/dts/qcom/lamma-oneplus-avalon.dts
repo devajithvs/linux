@@ -1783,6 +1783,16 @@
 	};
 };
 
-/* --- camera bring-up staging (results/device/2026-11-22-camera/stage.sh) --- */
-/* every camera node is okay; the modules are loaded one at a time by hand */
+/* --- camera bring-up staging (docs/runbook/30-camera-modules.md) --- */
+/*
+ * Every camera node stays disabled in the boot DTB: the daily's rootfs
+ * carries qcom-camss.ko and i2c-qcom-cci.ko (its kernel builds them as
+ * modules), so udev would load and probe them from an enabled node, and the
+ * CAMSS probe is the one access that has killed the phone twice (F0366,
+ * F0370). The drivers are =m and nothing loads them; the operator insmods
+ * them by hand once the phone answers ssh.
+ */
+&i2c7 { status = "disabled"; };
+&cci0 { status = "disabled"; };
+&camss { status = "disabled"; };
 /* --- end camera bring-up staging --- */
