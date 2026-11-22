@@ -76,7 +76,28 @@
 #define BF_AMPS		0x11e0	/* amplifier enable */
 #define BF_AREFS	0x11f0	/* references enable */
 #define BF_FSSYNCEN	0x0480	/* FS synchronisation of the clock divider */
+#define BF_TDMNBCK	0x20c3	/* bit clocks per frame */
+#define BF_TDMSLOTS	0x2013	/* slots per frame */
+#define BF_TDMSLLN	0x2144	/* bits per slot */
+#define BF_TDMSSIZE	0x2224	/* sample bits per slot */
 #define BF_TDME		0x2000	/* enable the digital interface */
+#define BF_TDMVSS	0x2703	/* slot of the voltage sense */
+#define BF_TDMCSS	0x26c3	/* slot of the current sense */
+#define BF_TDMVSE	0x2340	/* put the voltage sense in a TDM slot */
+#define BF_TDMCSE	0x2330	/* put the current sense in a TDM slot */
+#define BF_TDMSRCMAP	0x6802	/* I/V source map */
+#define BF_TDMSRCAS	0x6831
+#define BF_TDMSRCBS	0x6852
+#define BF_DCTRIP	0x7443
+#define BF_DCTRIPT	0x7584
+#define BF_LNMODE	0x62e1
+#define BF_MUTETO	0x0160
+
+static bool haptic_init;
+module_param(haptic_init, bool, 0444);
+MODULE_PARM_DESC(haptic_init,
+		 "write NXP's DSP-less haptic bring-up instead of the container's device list (diagnostic)");
+
 #define BF_MTPK		0xa107	/* MTP KEY2 register */
 
 #define BF_REG(f)	((f) >> 8)
@@ -511,6 +532,37 @@ static int tfa987x_init_part(struct tfa987x_priv *priv)
 	return tfa987x_bf_write(priv, BF_FSSYNCEN, 0);
 }
 
+/*
+ * NXP's own container-free sequence for this part (tfa_haptic.c:193-215): the
+ * one the vendor's haptic driver runs on this phone family.  Diagnostic only:
+ * it selects a bring-up path, and if the amplifier engages with it and not
+ * with the container's list, the difference is in the list, not the hardware.
+ */
+static int tfa987x_write_haptic_regs(struct tfa987x_priv *priv)
+{
+	static const struct {
+		u16 field;
+		u16 val;
+	} seq[] = {
+		{ BF_AUDFS, 8 }, { BF_TDME, 1 }, { BF_TDMNBCK, 2 },
+		{ BF_TDMSLOTS, 1 }, { BF_TDMSLLN, 31 }, { BF_TDMSSIZE, 15 },
+		{ BF_TDMSRCMAP, 2 }, { BF_TDMVSS, 0 }, { BF_TDMCSS, 1 },
+		{ BF_TDMVSE, 1 }, { BF_TDMCSE, 1 }, { BF_TDMSRCAS, 1 },
+		{ BF_TDMSRCBS, 2 }, { BF_DCA, 1 }, { BF_FSSYNCEN, 0 },
+		{ BF_DCTRIP, 11 }, { BF_DCTRIPT, 16 }, { BF_LNMODE, 1 },
+		{ BF_MUTETO, 1 }, { BF_MANSCONF, 1 },
+	};
+	int i, ret;
+
+	for (i = 0; i < ARRAY_SIZE(seq); i++) {
+		ret = tfa987x_bf_write(priv, seq[i].field, seq[i].val);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 static int tfa987x_write_dev_regs(struct tfa987x_priv *priv)
 {
 	const u8 *buf = priv->fw->data;
@@ -607,17 +659,24 @@ static int tfa987x_configure(struct tfa987x_priv *priv)
 		return ret;
 	}
 
-	ret = tfa987x_write_dev_regs(priv);
-	if (ret) {
-		dev_err(priv->dev, "device list write failed: %d\n", ret);
-		return ret;
-	}
+	if (haptic_init) {
+		dev_info(priv->dev, "haptic_init: NXP's container-free sequence\n");
+		ret = tfa987x_write_haptic_regs(priv);
+		if (ret)
+			return ret;
+	} else {
+		ret = tfa987x_write_dev_regs(priv);
+		if (ret) {
+			dev_err(priv->dev, "device list write failed: %d\n", ret);
+			return ret;
+		}
 
-	ret = tfa987x_write_profile(priv, priv->profile);
-	if (ret) {
-		dev_err(priv->dev, "profile %d write failed: %d\n",
-			priv->profile, ret);
-		return ret;
+		ret = tfa987x_write_profile(priv, priv->profile);
+		if (ret) {
+			dev_err(priv->dev, "profile %d write failed: %d\n",
+				priv->profile, ret);
+			return ret;
+		}
 	}
 
 	/*
