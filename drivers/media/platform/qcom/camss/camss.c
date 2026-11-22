@@ -5352,11 +5352,29 @@ static void camss_genpd_cleanup(struct camss *camss)
  *
  * Return 0 on success or a negative error code on failure
  */
+/*
+ * Bring-up gate. The CAMSS probe is the one access on this SoC that has killed
+ * the phone twice (F0366 at initcall time, F0370 through udev): the first
+ * camera-silicon read happens inside the sub-device probes, and a block whose
+ * clock or CAMCC power domain is not actually up stalls the interconnect. With
+ * the gate closed the driver declines the device before touching anything, so
+ * the boot is the daily's; the operator opens it and binds the device to make
+ * the probe run with the console up and its output in pstore's console zone.
+ */
+static bool bringup_gate;
+module_param(bringup_gate, bool, 0644);
+MODULE_PARM_DESC(bringup_gate, "0: decline the device before any register access; 1: probe");
+
 static int camss_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct camss *camss;
 	int ret;
+
+	if (!bringup_gate) {
+		dev_info(dev, "bringup_gate closed; not probing (set qcom_camss.bringup_gate=1 and bind)\n");
+		return -ENODEV;
+	}
 
 	camss = devm_kzalloc(dev, sizeof(*camss), GFP_KERNEL);
 	if (!camss)
