@@ -81,6 +81,7 @@
 #define BF_TDMSLLN	0x2144	/* bits per slot */
 #define BF_TDMSSIZE	0x2224	/* sample bits per slot */
 #define BF_TDME		0x2000	/* enable the digital interface */
+#define BF_TDMSPKE	0x2300	/* enable audio sink 0 (the amplifier's input) */
 #define BF_TDMVSS	0x2703	/* slot of the voltage sense */
 #define BF_TDMCSS	0x26c3	/* slot of the current sense */
 #define BF_TDMVSE	0x2340	/* put the voltage sense in a TDM slot */
@@ -734,6 +735,17 @@ static int tfa987x_configure(struct tfa987x_priv *priv)
 	 * drops the frames and AMPS never leaves 0.
 	 */
 	ret = tfa987x_bf_write(priv, BF_TDME, 1);
+	if (ret)
+		return ret;
+
+	/*
+	 * TDME only enables the interface; the amplifier's input is sink 0, and
+	 * its enable (TDMSPKE, 0x23 bit 0, tfa9873_tfafieldnames.h:109) is a
+	 * separate bit that neither the container's lists nor this driver wrote.
+	 * The in-progress mainline TFA2 driver sets the same pair separately
+	 * (lkml 2608.0/01116): without it SWS/AMPS stay 0 while the clocks run.
+	 */
+	ret = tfa987x_bf_write(priv, BF_TDMSPKE, 1);
 	if (ret)
 		return ret;
 
