@@ -1673,6 +1673,20 @@
 		drive-strength = <2>;
 		bias-disable;
 	};
+
+	cam_mclk4_default: cam-mclk4-default-state {
+		pins = "gpio68";
+		function = "cam_mclk";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	cam_reset3_default: cam-reset3-default-state {
+		pins = "gpio3";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
 };
 
 /*
@@ -1700,7 +1714,7 @@
 		compatible = "awinic,aw37004";
 		reg = <0x28>;
 
-		dvdd1 {
+		cam_dvdd1: dvdd1 {
 			regulator-name = "cam_dvdd1";
 			regulator-min-microvolt = <600000>;
 			regulator-max-microvolt = <1800000>;
@@ -1758,6 +1772,46 @@
 	};
 };
 
+/*
+ * The front camera (Open entry 46's second step): Samsung S5K3P9 on the AP's
+ * qupv3_se8 bus at 0x20, CSIPHY4, MCLK4 19.2 MHz on GPIO 68, reset on GPIO 3.
+ * Rails from the vendor overlay: AVDD1 2.8 V and DVDD1 1.05 V from the
+ * AW37004, I/O from L23B. The register programme is not in any public source
+ * (F0380), so the driver is a skeleton and the node stays disabled.
+ */
+&i2c8 {
+	status = "okay";
+	clock-frequency = <1000000>;
+
+	s5k3p9: camera@20 {
+		compatible = "samsung,s5k3p9";
+		reg = <0x20>;
+
+		clocks = <&camcc CAM_CC_MCLK4_CLK>;
+		assigned-clocks = <&camcc CAM_CC_MCLK4_CLK>;
+		assigned-clock-rates = <19200000>;
+
+		reset-gpios = <&tlmm 3 GPIO_ACTIVE_LOW>;
+
+		vana-supply = <&cam_avdd1>;
+		vdig-supply = <&cam_dvdd1>;
+		vio-supply = <&vreg_l23b>;
+
+		pinctrl-0 = <&cam_mclk4_default &cam_reset3_default>;
+		pinctrl-names = "default";
+
+		status = "disabled";
+
+		port {
+			s5k3p9_ep: endpoint {
+				data-lanes = <1 2 3 4>;
+				link-frequencies = /bits/ 64 <600000000>;
+				remote-endpoint = <&csiphy4_ep>;
+			};
+		};
+	};
+};
+
 &camss {
 	/*
 	 * The stock overlay puts all five PHYs on the same pair of rails:
@@ -1778,6 +1832,14 @@
 			csiphy1_ep: endpoint {
 				data-lanes = <0 1 2 3>;
 				remote-endpoint = <&imx355_ep>;
+			};
+		};
+
+		port@4 {
+			reg = <4>;
+			csiphy4_ep: endpoint {
+				data-lanes = <0 1 2 3>;
+				remote-endpoint = <&s5k3p9_ep>;
 			};
 		};
 	};

@@ -266,6 +266,15 @@ config VIDEO_IMX355
 	  To compile this driver as a module, choose M here: the
 	  module will be called imx355.
 
+config VIDEO_S5K3P9
+	tristate "Samsung S5K3P9 sensor support"
+	help
+	  This is a Video4Linux2 sensor driver for the Samsung S5K3P9 camera
+	  sensor (the OnePlus Nord 4's front camera). The register tables are
+	  not in any public source yet, so the driver is a skeleton: it probes,
+	  powers and exposes the subdev, and cannot stream until the tables are
+	  filled in.
+
 config VIDEO_IMX412
 	tristate "Sony IMX412 sensor support"
 	depends on OF
