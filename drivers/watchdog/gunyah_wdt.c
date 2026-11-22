@@ -10,6 +10,7 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/watchdog.h>
+#include <linux/workqueue.h>
 
 #define GUNYAH_WDT_SMCCC_CALL_VAL(func_id) \
 	ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL, ARM_SMCCC_SMC_32,\
@@ -165,6 +166,28 @@ static const struct watchdog_ops gunyah_wdt_ops = {
 	.restart = gunyah_wdt_restart
 };
 
+/* nord4 instrument (F0364): report the probe's and the disarm's SMCCC results through a panic at 12 s,
+ * so the phone's ramoops holds the early dmesg and the two return values even though the console
+ * never comes up. Not for release. */
+static int nord4_probe_ran;
+static int nord4_status_ret = -999;
+static int nord4_stop_ret = -999;
+
+static void nord4_wdt_report(struct work_struct *unused)
+{
+	panic("nord4-wdt: probe_ran=%d status=%d stop=%d jiffies=%lu\n",
+	      nord4_probe_ran, nord4_status_ret, nord4_stop_ret, jiffies);
+}
+
+static DECLARE_DELAYED_WORK(nord4_wdt_report_work, nord4_wdt_report);
+
+static int __init nord4_wdt_report_init(void)
+{
+	schedule_delayed_work(&nord4_wdt_report_work, 12 * HZ);
+	return 0;
+}
+late_initcall(nord4_wdt_report_init);
+
 static int gunyah_wdt_probe(struct platform_device *pdev)
 {
 	struct watchdog_device *wdd;
@@ -172,6 +195,8 @@ static int gunyah_wdt_probe(struct platform_device *pdev)
 	int ret;
 
 	ret = gunyah_wdt_call(GUNYAH_WDT_STATUS, 0, 0);
+	nord4_probe_ran = 1;
+	nord4_status_ret = ret;
 	if (ret == -EOPNOTSUPP)
 		return -ENODEV;
 
@@ -195,7 +220,7 @@ static int gunyah_wdt_probe(struct platform_device *pdev)
 	wdd->min_timeout = 1; /* seconds */
 	wdd->timeout = wdd->max_timeout;
 
-	gunyah_wdt_stop(wdd);
+	nord4_stop_ret = gunyah_wdt_stop(wdd);
 	platform_set_drvdata(pdev, wdd);
 	watchdog_set_restart_priority(wdd, 0);
 
