@@ -34,6 +34,21 @@ static u32 base;
 static unsigned int orig;
 static bool changed;
 
+static void dump(const char *tag);
+
+/* Write anything to this parameter to dump the registers at that moment
+ * (used while a torch is on, when the LED enable registers are not zero).
+ */
+static int read_now_set(const char *val, const struct kernel_param *kp)
+{
+	dump("now");
+	return 0;
+}
+static const struct kernel_param_ops read_now_ops = {
+	.set = read_now_set,
+};
+module_param_cb(read_now, &read_now_ops, NULL, 0200);
+
 static void dump(const char *tag)
 {
 	unsigned int sw = 0, mod = 0, ch = 0;
