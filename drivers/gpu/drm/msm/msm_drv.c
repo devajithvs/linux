@@ -66,10 +66,9 @@ bool msm_gpu_no_components(void)
 	return separate_gpu_kms;
 }
 
-static int msm_drm_uninit(struct device *dev, const struct component_ops *gpu_ops)
+static int msm_drm_uninit(struct device *dev, struct msm_drm_private *priv,
+			  const struct component_ops *gpu_ops)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct msm_drm_private *priv = platform_get_drvdata(pdev);
 	struct drm_device *ddev = priv->dev;
 
 	/*
@@ -181,7 +180,7 @@ static int msm_drm_init(struct device *dev, const struct drm_driver *drv,
 	return 0;
 
 err_msm_uninit:
-	msm_drm_uninit(dev, gpu_ops);
+	msm_drm_uninit(dev, priv, gpu_ops);
 
 	return ret;
 
@@ -1042,7 +1041,9 @@ static int msm_drm_bind(struct device *dev)
 
 static void msm_drm_unbind(struct device *dev)
 {
-	msm_drm_uninit(dev, NULL);
+	struct msm_drm_private *priv = dev_get_drvdata(dev);
+
+	msm_drm_uninit(dev, priv, NULL);
 }
 
 const struct component_master_ops msm_drm_ops = {
@@ -1118,7 +1119,14 @@ int msm_gpu_probe(struct platform_device *pdev,
 void msm_gpu_remove(struct platform_device *pdev,
 		    const struct component_ops *ops)
 {
-	msm_drm_uninit(&pdev->dev, ops);
+	/*
+	 * msm_gpu_init() owns the platform drvdata: it is &gpu->adreno_smmu so
+	 * the SMMU callbacks and dev_to_gpu() keep working.  The DRM device
+	 * carries the msm_drm_private that uninit needs.
+	 */
+	struct msm_gpu *gpu = dev_to_gpu(&pdev->dev);
+
+	msm_drm_uninit(&pdev->dev, gpu->dev->dev_private, ops);
 }
 
 static int __init msm_drm_register(void)
