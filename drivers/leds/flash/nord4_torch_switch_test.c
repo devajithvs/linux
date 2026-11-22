@@ -62,7 +62,7 @@ static void dump_map(const char *tag)
 	unsigned int v;
 	int r, n;
 
-	for (r = 0; r < 0x80; r += 8) {
+	for (r = 0; r < 0xa0; r += 8) {
 		n = scnprintf(line, sizeof(line), "nord4-torch-switch: %s %#04x:", tag, base + r);
 		for (int k = 0; k < 8; k++) {
 			if (regmap_read(regmap, base + r + k, &v))
