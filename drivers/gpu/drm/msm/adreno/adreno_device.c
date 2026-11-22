@@ -254,8 +254,13 @@ static int adreno_system_suspend(struct device *dev);
 static void adreno_unbind(struct device *dev, struct device *master,
 		void *data)
 {
-	struct msm_drm_private *priv = dev_get_drvdata(master);
+	/*
+	 * The GPU's platform drvdata is the adreno-smmu private interface
+	 * (dev_to_gpu()), not msm_drm_private.  The DRM device owns the
+	 * private state in both the component and standalone paths.
+	 */
 	struct msm_gpu *gpu = dev_to_gpu(dev);
+	struct msm_drm_private *priv = gpu->dev->dev_private;
 
 	if (pm_runtime_enabled(dev))
 		WARN_ON_ONCE(adreno_system_suspend(dev));
@@ -269,10 +274,15 @@ static const struct component_ops a3xx_ops = {
 	.unbind = adreno_unbind,
 };
 
+static bool adreno_uses_components(struct platform_device *pdev)
+{
+	return !of_device_is_compatible(pdev->dev.of_node, "amd,imageon") &&
+	       !msm_gpu_no_components();
+}
+
 static int adreno_probe(struct platform_device *pdev)
 {
-	if (of_device_is_compatible(pdev->dev.of_node, "amd,imageon") ||
-	    msm_gpu_no_components())
+	if (!adreno_uses_components(pdev))
 		return msm_gpu_probe(pdev, &a3xx_ops);
 
 	return component_add(&pdev->dev, &a3xx_ops);
@@ -280,9 +290,7 @@ static int adreno_probe(struct platform_device *pdev)
 
 static void adreno_remove(struct platform_device *pdev)
 {
-	struct msm_drm_private *priv = platform_get_drvdata(pdev);
-
-	if (priv->kms_init)
+	if (adreno_uses_components(pdev))
 		component_del(&pdev->dev, &a3xx_ops);
 	else
 		msm_gpu_remove(pdev, &a3xx_ops);
