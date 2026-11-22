@@ -35,6 +35,46 @@ MODULE_PARM_DESC(poke_val, "byte to write to poke_reg; restored on rmmod");
 module_param(enable, int, 0444);
 MODULE_PARM_DESC(enable, "0 = dump only (default), 1 = switch on, -1 = switch off");
 
+#define MAX_PN 8
+struct pn_save { u8 reg; unsigned int orig; bool used; };
+static struct pn_save pn[MAX_PN];
+static int pn_n;
+static uint pn_reg, pn_val;
+module_param(pn_reg, uint, 0644);
+module_param(pn_val, uint, 0644);
+MODULE_PARM_DESC(pn_reg, "offset to poke now (write pn_val, then pn_go)");
+MODULE_PARM_DESC(pn_val, "byte for the immediate poke");
+
+static int pn_go_set(const char *val, const struct kernel_param *kp)
+{
+	unsigned int cur;
+	int i;
+
+	if (pn_reg > 0xff)
+		return -EINVAL;
+	if (pn_n < MAX_PN) {
+		bool seen = false;
+
+		for (i = 0; i < pn_n; i++)
+			if (pn[i].reg == pn_reg)
+				seen = true;
+		if (!seen) {
+			if (regmap_read(regmap, base + pn_reg, &cur))
+				return -EIO;
+			pn[pn_n].reg = pn_reg;
+			pn[pn_n].orig = cur;
+			pn[pn_n].used = true;
+			pn_n++;
+		}
+	}
+	if (regmap_write(regmap, base + pn_reg, pn_val & 0xff))
+		return -EIO;
+	dump("pn");
+	return 0;
+}
+static const struct kernel_param_ops pn_go_ops = { .set = pn_go_set };
+module_param_cb(pn_go, &pn_go_ops, NULL, 0200);
+
 static struct regmap *regmap;
 static u32 base;
 static unsigned int orig;
@@ -159,6 +199,9 @@ static int __init nord4_torch_switch_init(void)
 
 static void __exit nord4_torch_switch_exit(void)
 {
+	for (pn_n--; pn_n >= 0; pn_n--)
+		if (pn[pn_n].used)
+			regmap_write(regmap, base + pn[pn_n].reg, pn[pn_n].orig);
 	if (poked && regmap_write(regmap, base + poke_reg, poke_orig))
 		pr_err("nord4-torch-switch: poke restore failed\n");
 	if (!changed)
