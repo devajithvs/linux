@@ -254,7 +254,8 @@
 		 * (F0377, F0381).
 		 */
 		iommus = <&apps_smmu 0x800 0x20>,
-			 <&apps_smmu 0x18a0 0x0>;
+			 <&apps_smmu 0x18a0 0x0>,
+			 <&apps_smmu 0x1860 0x0>;
 
 		power-domains = <&camcc CAM_CC_IFE_0_GDSC>,
 				<&camcc CAM_CC_IFE_1_GDSC>,
