@@ -631,6 +631,17 @@ static int tfa987x_configure(struct tfa987x_priv *priv)
 	if (ret)
 		return ret;
 
+	/*
+	 * The vendor's INIT_CF state for this family sets MANSCONF before it
+	 * leaves powerdown (tfa_dsp_v6.c:4232-4243): telling the part that I2C
+	 * configured it is what takes it out of wait4srcsettings, and doing it
+	 * after the powerdown transition leaves the state machine where the
+	 * amplifier never engages (AMPS 0 while AMPE is 1).
+	 */
+	ret = tfa987x_bf_write(priv, BF_MANSCONF, 1);
+	if (ret)
+		return ret;
+
 	ret = tfa987x_bf_write(priv, BF_PWDN, 0);
 	if (ret)
 		return ret;
