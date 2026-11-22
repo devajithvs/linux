@@ -661,11 +661,13 @@ static void tfa987x_show_status(struct tfa987x_priv *priv, const char *when)
 }
 
 /*
- * The vendor's cold start for a probus part (tfa_dsp_v6.c:3132-3295,
- * 4220-4330): reset the I2C register file, write the device list's interface
- * and protection settings, write the profile, leave powerdown and wait for
- * the clock, then set MANSCONF and the amplifier.  The DSP half of the
- * sequence is the no-op the phone's own build compiles; there is no DSP.
+ * The vendor's cold start for a probus part (tfa_dsp_v6.c:4225-4310).  The
+ * state machine fixes the order, and it is not the obvious one: the part is
+ * taken out of powerdown *first* (INIT_CF: MANSCONF, then PWDN=0, then the
+ * wait for system stability), and only then is the container written — the
+ * register file the container programs is the one the part exposes in
+ * INIT_CF/INIT_FW, and the profile's DCDC and protection settings are
+ * shadowed by the powerdown transition when they are written before it.
  */
 static int tfa987x_configure(struct tfa987x_priv *priv)
 {
@@ -682,6 +684,28 @@ static int tfa987x_configure(struct tfa987x_priv *priv)
 		return ret;
 	}
 
+	/*
+	 * INIT_CF (tfa_dsp_v6.c:4225-4243): MANSCONF before PWDN, then the
+	 * part leaves wait4srcsettings and starts its clocks.
+	 */
+	ret = tfa987x_bf_write(priv, BF_MANSCONF, 1);
+	if (ret)
+		return ret;
+
+	ret = tfa987x_bf_write(priv, BF_PWDN, 0);
+	if (ret)
+		return ret;
+
+	/*
+	 * The DSP may not be driving the interface yet: the bit clock is voted
+	 * in the CPU DAI's hw_params and the I2S endpoint starts with the
+	 * graph.  A timeout here is not fatal; tfa987x_unmute() waits again
+	 * with the stream running.
+	 */
+	if (tfa987x_wait_clks(priv))
+		dev_info(priv->dev, "no clock yet, waiting until the stream starts\n");
+
+	/* INIT_HW/INIT_CF: the container's device list and profile. */
 	if (haptic_init) {
 		dev_info(priv->dev, "haptic_init: NXP's container-free sequence\n");
 		ret = tfa987x_write_haptic_regs(priv);
@@ -712,30 +736,6 @@ static int tfa987x_configure(struct tfa987x_priv *priv)
 	ret = tfa987x_bf_write(priv, BF_TDME, 1);
 	if (ret)
 		return ret;
-
-	/*
-	 * The vendor's INIT_CF state for this family sets MANSCONF before it
-	 * leaves powerdown (tfa_dsp_v6.c:4232-4243): telling the part that I2C
-	 * configured it is what takes it out of wait4srcsettings, and doing it
-	 * after the powerdown transition leaves the state machine where the
-	 * amplifier never engages (AMPS 0 while AMPE is 1).
-	 */
-	ret = tfa987x_bf_write(priv, BF_MANSCONF, 1);
-	if (ret)
-		return ret;
-
-	ret = tfa987x_bf_write(priv, BF_PWDN, 0);
-	if (ret)
-		return ret;
-
-	/*
-	 * The DSP may not be driving the interface yet: the bit clock is voted
-	 * in the CPU DAI's hw_params and the I2S endpoint starts with the
-	 * graph.  A timeout here is not fatal; tfa987x_unmute() waits again
-	 * with the stream running.
-	 */
-	if (tfa987x_wait_clks(priv))
-		dev_info(priv->dev, "no clock yet, waiting until the stream starts\n");
 
 	priv->configured = true;
 	dev_info(priv->dev, "configured, profile %d (%s) at %u Hz\n",
