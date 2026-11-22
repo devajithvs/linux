@@ -53,9 +53,17 @@ static int __init nord4_torch_switch_init(void)
 	u8 v;
 	int rc;
 
-	np = of_find_compatible_node(NULL, NULL, "qcom,pm8350c-flash-led");
+	/* The running daily's node is pmic@1:led-controller@ee00 with
+	 * "qcom,pm7550-flash-led" and the generic "qcom,spmi-flash-led" (the
+	 * driver binds the generic one). Try all three.
+	 */
+	np = of_find_compatible_node(NULL, NULL, "qcom,spmi-flash-led");
+	if (!np)
+		np = of_find_compatible_node(NULL, NULL, "qcom,pm7550-flash-led");
+	if (!np)
+		np = of_find_compatible_node(NULL, NULL, "qcom,pm8350c-flash-led");
 	if (!np) {
-		pr_err("nord4-torch-switch: no pm8350c flash node\n");
+		pr_err("nord4-torch-switch: no flash-led node\n");
 		return -ENODEV;
 	}
 	rc = of_property_read_u16(np, "reg", &base);
