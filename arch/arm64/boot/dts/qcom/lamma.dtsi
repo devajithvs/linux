@@ -247,9 +247,14 @@
 		interconnect-names = "ahb",
 				     "hf_mnoc";
 
-		iommus = <&apps_smmu 0x800 0x20>,
-			 <&apps_smmu 0x18a0 0x40>,
-			 <&apps_smmu 0x1860 0x00>;
+		/*
+		 * B1 of the probe ladder: no iommus. The driver core attaches the
+		 * SMMU (arm_smmu_probe_device writes SMR/S2CR for every ID) at
+		 * dma_configure, before camss_probe and before bringup_gate, so
+		 * this is the one pre-probe hardware effect this image removes
+		 * (F0377). Upstream sm8650.dtsi has the same triple, so the values
+		 * are not the question; whether the write is legal under Gunyah is.
+		 */
 
 		power-domains = <&camcc CAM_CC_IFE_0_GDSC>,
 				<&camcc CAM_CC_IFE_1_GDSC>,
