@@ -76,6 +76,7 @@
 #define BF_AMPS		0x11e0	/* amplifier enable */
 #define BF_AREFS	0x11f0	/* references enable */
 #define BF_FSSYNCEN	0x0480	/* FS synchronisation of the clock divider */
+#define BF_TDME		0x2000	/* enable the digital interface */
 #define BF_MTPK		0xa107	/* MTP KEY2 register */
 
 #define BF_REG(f)	((f) >> 8)
@@ -619,6 +620,17 @@ static int tfa987x_configure(struct tfa987x_priv *priv)
 		return ret;
 	}
 
+	/*
+	 * The container programs the TDM framing but never enables the
+	 * interface: TDME is not in its device list.  NXP's own DSP-less
+	 * bring-up for this part sets it explicitly before the amplifier is
+	 * asked to engage (tfa_haptic.c:193-215); with TDME clear the receiver
+	 * drops the frames and AMPS never leaves 0.
+	 */
+	ret = tfa987x_bf_write(priv, BF_TDME, 1);
+	if (ret)
+		return ret;
+
 	ret = tfa987x_bf_write(priv, BF_PWDN, 0);
 	if (ret)
 		return ret;
@@ -652,6 +664,13 @@ static int tfa987x_unmute(struct tfa987x_priv *priv)
 	ret = tfa987x_wait_clks(priv);
 	if (ret)
 		return ret;
+
+	/*
+	 * The alarm bits are sticky and clear when read; clear them before the
+	 * state machine is asked to engage.
+	 */
+	regmap_read(priv->regmap, TFA987X_REG_STATUS1, &plls);
+	regmap_read(priv->regmap, TFA987X_REG_STATUS2, &plls);
 
 	ret = tfa987x_bf_write(priv, BF_MANSCONF, 1);
 	if (ret)
