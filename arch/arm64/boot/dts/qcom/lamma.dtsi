@@ -248,13 +248,12 @@
 				     "hf_mnoc";
 
 		/*
-		 * B1 of the probe ladder: no iommus. The driver core attaches the
-		 * SMMU (arm_smmu_probe_device writes SMR/S2CR for every ID) at
-		 * dma_configure, before camss_probe and before bringup_gate, so
-		 * this is the one pre-probe hardware effect this image removes
-		 * (F0377). Upstream sm8650.dtsi has the same triple, so the values
-		 * are not the question; whether the write is legal under Gunyah is.
+		 * B2 of the probe ladder: only the vendor's IFE stream ID, unmasked.
+		 * B1 (no iommus) booted, so the boot-time attach is the killer; this
+		 * adds back one ID at a time and never the masked 0x18a0 entry
+		 * (F0377, F0381).
 		 */
+		iommus = <&apps_smmu 0x800 0x20>;
 
 		power-domains = <&camcc CAM_CC_IFE_0_GDSC>,
 				<&camcc CAM_CC_IFE_1_GDSC>,
