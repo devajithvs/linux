@@ -24,6 +24,7 @@
 #define FLASH_SUBTYPE_3CH_PM8150_VAL	0x04
 #define FLASH_SUBTYPE_3CH_PMI8998_VAL	0x03
 #define FLASH_SUBTYPE_4CH_VAL		0x07
+#define FLASH_LED_SWITCH_EN_REG		0x65
 
 #define FLASH_STS_3CH_OTST1		BIT(0)
 #define FLASH_STS_3CH_OTST2		BIT(1)
@@ -194,25 +195,11 @@ struct qcom_flash_led {
 	bool				enabled;
 };
 
-/*
- * Test hook for the LED switch (F0293, F0361). Downstream's qpnp-flash-v2
- * enables the LEDs at 0x4c (per-LED bits) and sets the current resolution at
- * 0x47, while this driver enables them at 0x4e and sets 0x49; a dump of the
- * module while a torch was on (F0361) shows this driver's write landing but no
- * light, and neither map is proven on this part. With this parameter set, the
- * torch enable also writes the downstream registers, so one boot settles which
- * map the silicon answers to. Default off: no image that does not set it
- * changes behaviour.
- */
-static bool switch_test;
-module_param(switch_test, bool, 0644);
-MODULE_PARM_DESC(switch_test, "also write the downstream LED-enable (0x4c) and IRES (0x47) registers on torch on");
-
 static int set_flash_module_en(struct qcom_flash_led *led, bool en)
 {
 	struct qcom_flash_data *flash_data = led->flash_data;
 	u8 led_mask = 0, enable;
-	int i, rc;
+	int i, rc, rc2;
 
 	for (i = 0; i < led->chan_count; i++)
 		led_mask |= BIT(led->chan_id[i]);
@@ -224,9 +211,39 @@ static int set_flash_module_en(struct qcom_flash_led *led, bool en)
 		flash_data->chan_en_bits &= ~led_mask;
 
 	enable = !!flash_data->chan_en_bits;
+
+	/*
+	 * The 4-channel block needs its LED switch enabled (0x65 bit 0) or the
+	 * channels are enabled but not routed to the flash pins; the stock
+	 * leds-qti-flash module writes it around every strobe (F0387).
+	 */
+	if (flash_data->hw_type == QCOM_MVFLASH_4CH) {
+		rc2 = regmap_update_bits(flash_data->regmap,
+					 flash_data->reg_base + FLASH_LED_SWITCH_EN_REG,
+					 BIT(0), enable ? BIT(0) : 0);
+		if (rc2)
+			dev_err(led->flash.led_cdev.dev,
+				"write switch enable failed, rc=%d\n", rc2);
+	}
+
 	rc = regmap_field_write(flash_data->r_fields[REG_MODULE_EN], enable);
 	if (rc)
 		dev_err(led->flash.led_cdev.dev, "write module_en failed, rc=%d\n", rc);
+	else if (enable && flash_data->hw_type == QCOM_MVFLASH_4CH) {
+		u32 sw = 0, mod = 0, ch = 0;
+
+		regmap_read(flash_data->regmap,
+			    flash_data->reg_base + FLASH_LED_SWITCH_EN_REG, &sw);
+		rc2 = regmap_read(flash_data->regmap,
+				  flash_data->reg_base + 0x46, &mod);
+		if (!rc2)
+			rc2 = regmap_read(flash_data->regmap,
+					  flash_data->reg_base + 0x4e, &ch);
+		if (!rc2)
+			dev_info(led->flash.led_cdev.dev,
+				 "flash readback: switch=%#02x mod=%#02x chan=%#02x\n",
+				 sw, mod, ch);
+	}
 	mutex_unlock(&flash_data->lock);
 
 	return rc;
@@ -630,20 +647,6 @@ static int qcom_flash_led_brightness_set(struct led_classdev *led_cdev,
 	rc = set_flash_module_en(led, enable);
 	if (rc)
 		return rc;
-
-	if (enable && switch_test) {
-		struct qcom_flash_data *fd = led->flash_data;
-		u8 mask = 0;
-		int i;
-
-		for (i = 0; i < led->chan_count; i++)
-			mask |= BIT(led->chan_id[i]);
-		regmap_write(fd->regmap, fd->reg_base + 0x4c, mask);
-		regmap_write(fd->regmap, fd->reg_base + 0x47, 0xff);
-		dev_info(led_cdev->dev,
-			 "switch_test: wrote 0x4c=%02x 0x47=ff for channels %02x\n",
-			 mask, mask);
-	}
 
 	return set_flash_strobe(led, SW_STROBE, enable);
 }
