@@ -35,6 +35,15 @@ MODULE_PARM_DESC(poke_val, "byte to write to poke_reg; restored on rmmod");
 module_param(enable, int, 0444);
 MODULE_PARM_DESC(enable, "0 = dump only (default), 1 = switch on, -1 = switch off");
 
+
+static struct regmap *regmap;
+static u32 base;
+static unsigned int orig;
+static unsigned int poke_orig;
+static bool changed, poked;
+
+static void dump(const char *tag);
+
 #define MAX_PN 8
 struct pn_save { u8 reg; unsigned int orig; bool used; };
 static struct pn_save pn[MAX_PN];
@@ -74,14 +83,6 @@ static int pn_go_set(const char *val, const struct kernel_param *kp)
 }
 static const struct kernel_param_ops pn_go_ops = { .set = pn_go_set };
 module_param_cb(pn_go, &pn_go_ops, NULL, 0200);
-
-static struct regmap *regmap;
-static u32 base;
-static unsigned int orig;
-static unsigned int poke_orig;
-static bool changed, poked;
-
-static void dump(const char *tag);
 
 /* Write anything to this parameter to dump the registers at that moment
  * (used while a torch is on, when the LED enable registers are not zero).
