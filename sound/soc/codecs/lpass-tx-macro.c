@@ -2132,13 +2132,15 @@ static int tx_macro_component_probe(struct snd_soc_component *comp)
 	}
 	tx->component = comp;
 
-	snd_soc_component_update_bits(comp, CDC_TX0_TX_PATH_SEC7, 0x3F,
-				      0x0A);
-	/* Enable swr mic0 and mic1 clock */
-	snd_soc_component_write(comp, CDC_TX_TOP_CSR_SWR_AMIC0_CTL,
-				CDC_TX_SWR_MIC_CLK_DEFAULT);
-	snd_soc_component_write(comp, CDC_TX_TOP_CSR_SWR_AMIC1_CTL,
-				CDC_TX_SWR_MIC_CLK_DEFAULT);
+	/*
+	 * F0417: the three SWR microphone clock register writes that used to
+	 * stand here (CDC_TX0_TX_PATH_SEC7 and the AMIC0/AMIC1 clock controls)
+	 * run the first time a card binds this macro's DAI, after the codec's
+	 * TX SoundWire slave has already attached, and the slave alerts at that
+	 * moment.  This build omits only them: everything else in the probe is
+	 * unchanged, so a card that registers with a still-Attached TX slave
+	 * implicates these writes and nothing else.
+	 */
 
 	return 0;
 }
