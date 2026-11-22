@@ -1220,7 +1220,12 @@ KBUILD_CFLAGS   += $(KCFLAGS)
 KBUILD_RUSTFLAGS += $(KRUSTFLAGS)
 
 KBUILD_LDFLAGS_MODULE += --build-id=sha1
-LDFLAGS_vmlinux += --build-id=sha1
+# One revision, one Image (docs/findings/F0364): the sha1 build-id is a hash of every
+# output section, .debug_* included, and clang records its working directory — the O=
+# tree — as DW_AT_comp_dir, so two builds of one revision differed in this 20-byte note
+# and nothing else. The Image drops the build-id note anyway (arch/arm64/boot/Makefile
+# -R .note.gnu.build-id), so the vmlinux link carries none.
+LDFLAGS_vmlinux += --build-id=none
 
 KBUILD_LDFLAGS	+= -z noexecstack
 ifeq ($(CONFIG_LD_IS_BFD),y)
