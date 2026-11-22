@@ -606,6 +606,29 @@ static int tfa987x_wait_clks(struct tfa987x_priv *priv)
 	return ret;
 }
 
+/* The part's own sense registers, read before anything is written: they say
+ * whether the supply and temperature blocks answer at all out of reset. */
+static void tfa987x_show_sense(struct tfa987x_priv *priv, const char *when)
+{
+	unsigned int bats = 0, temps = 0, vddps = 0;
+	int ret;
+
+	ret = regmap_read(priv->regmap, 0x15, &bats);
+	if (!ret)
+		ret = regmap_read(priv->regmap, 0x16, &temps);
+	if (!ret)
+		ret = regmap_read(priv->regmap, 0x17, &vddps);
+	if (ret) {
+		dev_err(priv->dev, "sense read failed: %d\n", ret);
+		return;
+	}
+
+	dev_info(priv->dev,
+		 "%s: sense 0x15=0x%04x 0x16=0x%04x 0x17=0x%04x (BATS=%u TEMPS=%u VDDPS=%u)\n",
+		 when, bats, temps, vddps,
+		 bats & 0x3ff, (temps >> 8) & 1, (vddps >> 9) & 0x3ff);
+}
+
 static void tfa987x_show_status(struct tfa987x_priv *priv, const char *when)
 {
 	unsigned int clks = 0, plls = 0, amps = 0, arefs = 0, sws = 0;
@@ -981,6 +1004,11 @@ static int tfa987x_i2c_probe(struct i2c_client *client)
 		return dev_err_probe(dev, ret, "failed to read the revision\n");
 
 	priv->rev = rev;
+
+	/* Before any write: does the part's own sense block answer? */
+	mutex_lock(&priv->lock);
+	tfa987x_show_sense(priv, "at probe");
+	mutex_unlock(&priv->lock);
 
 	switch (rev & 0xff) {
 	case TFA9873_ID:
