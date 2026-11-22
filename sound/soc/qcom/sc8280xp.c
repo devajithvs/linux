@@ -78,7 +78,6 @@ static int sc8280xp_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	struct snd_mask *fmt = hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
 
 	rate->min = rate->max = 48000;
-	snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
 	channels->min = 2;
 	channels->max = 2;
 	switch (cpu_dai->id) {
@@ -91,6 +90,7 @@ static int sc8280xp_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 		 * that, and the MI2S bit clock follows it (q6apm-lpass-dais.c
 		 * votes rate * channels * 32 for widths above 16).
 		 */
+		snd_mask_none(fmt);
 		snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S32_LE);
 		break;
 	case TX_CODEC_DMA_TX_0:
@@ -98,8 +98,15 @@ static int sc8280xp_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	case TX_CODEC_DMA_TX_2:
 	case TX_CODEC_DMA_TX_3:
 		channels->min = 1;
-		break;
+		fallthrough;
 	default:
+		/*
+		 * The format mask is a set of bits, not one value: leave it
+		 * untouched and params_format() reports the lowest set bit, so
+		 * the sixteen-bit default has to replace the set, not join it.
+		 */
+		snd_mask_none(fmt);
+		snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
 		break;
 	}
 
