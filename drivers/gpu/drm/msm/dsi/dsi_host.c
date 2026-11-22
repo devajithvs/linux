@@ -1409,14 +1409,10 @@ static int dsi_long_read_resp(u8 *buf, const struct mipi_dsi_msg *msg)
 
 int dsi_dma_base_get_6g(struct msm_dsi_host *msm_host, uint64_t *dma_base)
 {
-	struct drm_device *dev = msm_host->dev;
-	struct msm_drm_private *priv = dev->dev_private;
-
 	if (!dma_base)
 		return -EINVAL;
 
-	return msm_gem_get_and_pin_iova(msm_host->tx_gem_obj,
-				priv->kms->vm, dma_base);
+	return msm_gem_get_iova(msm_host->tx_gem_obj, msm_host->vm, dma_base);
 }
 
 int dsi_dma_base_get_v2(struct msm_dsi_host *msm_host, uint64_t *dma_base)

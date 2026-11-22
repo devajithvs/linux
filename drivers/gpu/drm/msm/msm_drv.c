@@ -88,13 +88,21 @@ static int msm_drm_uninit(struct device *dev, struct msm_drm_private *priv,
 
 	msm_rd_debugfs_cleanup(priv);
 
-	if (priv->kms)
-		msm_drm_kms_uninit(dev);
-
+	/*
+	 * Unbind the components before the KMS releases its VM and detaches
+	 * the display SMMU.  dsi_unbind() -> msm_dsi_tx_buf_free() frees the
+	 * DSI tx buffer through the VM reference taken by
+	 * dsi_tx_buf_alloc_6g(), so the unmap must still run on the attached
+	 * domain and priv->kms->vm must still name that VM so
+	 * msm_gem_unpin_iova() leaves the KMS VMA for the object-free path.
+	 */
 	if (gpu_ops)
 		gpu_ops->unbind(dev, dev, NULL);
 	else
 		component_unbind_all(dev, ddev);
+
+	if (priv->kms)
+		msm_drm_kms_uninit(dev);
 
 	ddev->dev_private = NULL;
 	drm_dev_put(ddev);
