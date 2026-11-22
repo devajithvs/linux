@@ -1503,7 +1503,14 @@
 		compatible = "sdw20217010a00";
 		reg = <0 3>;
 
-		qcom,tx-port-mapping = <2 2 3 4>;
+		/*
+		 * One change against boot E: the reference board for this codec maps
+		 * the four codec TX data ports onto master ports 1, 1, 2, 3
+		 * (qcm6490-idp.dts:967-973); the SM8550 WCD9385 table this node
+		 * carried (2, 2, 3, 4) names a port the SM7675 TX macro does not
+		 * have, and the codec's own interrupt follows (F0413).
+		 */
+		qcom,tx-port-mapping = <1 1 2 3>;
 
 	};
 };
