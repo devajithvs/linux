@@ -1784,4 +1784,6 @@
 };
 
 /* --- camera bring-up staging (results/device/2026-11-22-camera/stage.sh) --- */
+&i2c7 { status = "disabled"; };
+&cci0 { status = "disabled"; };
 /* --- end camera bring-up staging --- */
