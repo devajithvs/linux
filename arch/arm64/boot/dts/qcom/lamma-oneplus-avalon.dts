@@ -1784,6 +1784,5 @@
 };
 
 /* --- camera bring-up staging (results/device/2026-11-22-camera/stage.sh) --- */
-&i2c7 { status = "disabled"; };
-&cci0 { status = "disabled"; };
+/* every camera node is okay; the modules are loaded one at a time by hand */
 /* --- end camera bring-up staging --- */
