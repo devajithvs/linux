@@ -17,6 +17,7 @@
  */
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
 
@@ -51,7 +52,7 @@ static int __init nord4_torch_switch_init(void)
 {
 	struct device_node *np;
 	struct platform_device *pdev;
-	unsigned int v, want;
+	unsigned int want;
 	int rc;
 
 	np = of_find_compatible_node(NULL, NULL, "qcom,spmi-flash-led");
