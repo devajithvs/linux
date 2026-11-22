@@ -26,13 +26,20 @@
 #define CHAN_REG	0x4e
 
 static int enable;
+static uint poke_reg = 0xffff;
+static uint poke_val;
+module_param(poke_reg, uint, 0444);
+module_param(poke_val, uint, 0444);
+MODULE_PARM_DESC(poke_reg, "offset 0x00-0xff to poke once (default 0xffff = none)");
+MODULE_PARM_DESC(poke_val, "byte to write to poke_reg; restored on rmmod");
 module_param(enable, int, 0444);
 MODULE_PARM_DESC(enable, "0 = dump only (default), 1 = switch on, -1 = switch off");
 
 static struct regmap *regmap;
 static u32 base;
 static unsigned int orig;
-static bool changed;
+static unsigned int poke_orig;
+static bool changed, poked;
 
 static void dump(const char *tag);
 
@@ -122,6 +129,19 @@ static int __init nord4_torch_switch_init(void)
 	}
 	dump("before");
 
+	if (poke_reg != 0xffff) {
+		if (poke_reg > 0xff) {
+			pr_err("nord4-torch-switch: poke_reg out of range\n");
+			return -EINVAL;
+		}
+		if (regmap_read(regmap, base + poke_reg, &poke_orig))
+			return -EIO;
+		if (regmap_write(regmap, base + poke_reg, poke_val & 0xff))
+			return -EIO;
+		poked = true;
+		dump("poke");
+	}
+
 	if (enable) {
 		want = (orig & ~BIT(0));
 		if (enable > 0)
@@ -139,6 +159,8 @@ static int __init nord4_torch_switch_init(void)
 
 static void __exit nord4_torch_switch_exit(void)
 {
+	if (poked && regmap_write(regmap, base + poke_reg, poke_orig))
+		pr_err("nord4-torch-switch: poke restore failed\n");
 	if (!changed)
 		return;
 	if (regmap_write(regmap, base + SWITCH_REG, orig))
