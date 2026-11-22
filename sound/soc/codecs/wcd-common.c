@@ -103,17 +103,7 @@ int wcd_update_status(struct sdw_slave *slave, enum sdw_slave_status status)
 {
 	struct regmap *regmap = dev_get_regmap(&slave->dev, NULL);
 
-	dev_info(&slave->dev, "soundwire status %d\n", status);
-
-	/*
-	 * Leave cache-only for every state but unattached.  An alert is
-	 * serviced by reading the slave's SCP interrupt status over SoundWire
-	 * right after this call, and a cache-only regmap would answer from the
-	 * cache: the alert stays latched, the slave stays in ALERT, and the
-	 * TX slave's ports never stream (the phone's TX slave reads 'Alert'
-	 * from boot while the RX one reads 'Attached').
-	 */
-	if (regmap && status != SDW_SLAVE_UNATTACHED) {
+	if (regmap && status == SDW_SLAVE_ATTACHED) {
 		/* Write out any cached changes that happened between probe and attach */
 		regcache_cache_only(regmap, false);
 		return regcache_sync(regmap);
