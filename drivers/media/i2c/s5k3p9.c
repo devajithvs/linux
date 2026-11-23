@@ -45,7 +45,7 @@
 #define S5K3P9_HEIGHT			1744
 
 /*
- * PLL at the board's 19.2 MHz MCLK (registers 0x0136 and 0x0300-0x030E):
+ * PLL at the board's 19.2 MHz MCLK (registers 0x0136 and 0x0300-0x0312):
  *
  *   VCO    = MCLK / pre_pll_clk_div * pll_multiplier = 19.2 MHz / 4 * 175
  *          = 840 MHz
@@ -58,9 +58,16 @@
  * The 24 MHz MediaTek table's 6/245 pair gives a 980 MHz VCO, a 560 MHz
  * pixel clock and a 700 MHz link. Keeping that VCO at 19.2 MHz would need
  * 7.5/306.25, so no 5/4 scaling of the integer registers is exact; 4/175 is
- * the exact pair for the DT's 600 MHz link (700 MHz * 6/7). 0x030C/0x030E are
- * output-domain dividers, not PLL feedback terms, and stay as the table has
- * them; 0x030E = 4 is what s5kjn1 uses at the same 840 MHz VCO.
+ * the exact pair for the DT's 600 MHz link (700 MHz * 6/7).
+ *
+ * 0x030E/0x0310 are a second PLL on this block, (MCLK / 0x030E) * 0x0310, and
+ * are as MCLK-dependent as the main one. The 24 MHz table's 4/112 is 672 MHz;
+ * with the divider left at 4 the board's 19.2 MHz gives 537.6 MHz, which is
+ * the no-frame state of F0442. Both mainline drivers for this register block
+ * retime the pair with the MCLK to hold the product: s5k3m5.c carries 3/90
+ * (720 MHz) at 24 MHz, and s5kjn1's 19.2 MHz support turns its 24 MHz 4/146
+ * into 3/137 (876 -> 876.8 MHz) alongside 0x0304/0x0306. So 19.2/3 * 105 =
+ * 672 MHz exactly, the 24 MHz table's own second clock.
  *
  * At the table's 7,152 x 2,608 line and frame length, 480 MHz is 25.7 fps.
  */
@@ -81,6 +88,8 @@
 #define S5K3P9_REG_EXTCLK		0x0136
 #define S5K3P9_REG_PLL_PRE_DIV		0x0304
 #define S5K3P9_REG_PLL_MULT		0x0306
+#define S5K3P9_REG_PLL2_PRE_DIV		0x030e
+#define S5K3P9_REG_PLL2_MULT		0x0310
 
 struct s5k3p9_reg {
 	u16 reg;
@@ -1696,8 +1705,8 @@ static const struct s5k3p9_reg s5k3p9_mode_regs[] = {
 	{ 0x0308, 0x0008 },
 	{ 0x030a, 0x0001 },
 	{ 0x030c, 0x0000 },
-	{ 0x030e, 0x0004 },
-	{ 0x0310, 0x0070 },
+	{ 0x030e, 0x0003 },	/* 0x0004 at 24 MHz: 19.2/3 * 105 = 672 MHz */
+	{ 0x0310, 0x0069 },	/* 0x0070 at 24 MHz: 24/4 * 112 = 672 MHz */
 	{ 0x0312, 0x0001 },
 	{ 0x0340, 0x0a30 },
 	{ 0x0342, 0x1bf0 },
@@ -1822,7 +1831,7 @@ static void s5k3p9_power_off(struct s5k3p9 *sensor)
 static void s5k3p9_stream_report(struct s5k3p9 *sensor, const char *what)
 {
 	unsigned int mode = 0, frame = 0, lanes = 0, extclk = 0;
-	unsigned int pre = 0, mult = 0;
+	unsigned int pre = 0, mult = 0, pre2 = 0, mult2 = 0;
 	int ret;
 
 	/* F0440: the driver had no readback path; report what the part holds */
@@ -1838,10 +1847,16 @@ static void s5k3p9_stream_report(struct s5k3p9 *sensor, const char *what)
 		ret = regmap_read(sensor->regmap, S5K3P9_REG_PLL_PRE_DIV, &pre);
 	if (!ret)
 		ret = regmap_read(sensor->regmap, S5K3P9_REG_PLL_MULT, &mult);
+	if (!ret)
+		ret = regmap_read(sensor->regmap, S5K3P9_REG_PLL2_PRE_DIV,
+				  &pre2);
+	if (!ret)
+		ret = regmap_read(sensor->regmap, S5K3P9_REG_PLL2_MULT,
+				  &mult2);
 
 	dev_info(sensor->sd.dev,
-		 "%s: ctrl 0x%02x frame_count %u lane_mode 0x%04x extclk 0x%04x pll %u/%u%s\n",
-		 what, mode, frame, lanes, extclk, pre, mult,
+		 "%s: ctrl 0x%02x frame_count %u lane_mode 0x%04x extclk 0x%04x pll %u/%u pll2 %u/%u%s\n",
+		 what, mode, frame, lanes, extclk, pre, mult, pre2, mult2,
 		 ret ? " (readback failed)" : "");
 }
 
