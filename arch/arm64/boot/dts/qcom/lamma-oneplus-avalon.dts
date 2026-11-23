@@ -128,11 +128,9 @@
 	 * 13890 and 361110 uA; rxtx and vddpx static, buck on demand) and BOB
 	 * at 3.296 V feeds vdd-mic-bias at 6760 uA
 	 * (audio-devicetree/cliffs-audio-overlay.dtsi:318-332 and
-	 * oplus/cliffs-audio-overlay-common.dtsi:33-39). Downstream's final
-	 * Avalon overlay leaves the three mic biases at 1800 mV
-	 * (oplus/avalon-24211-audio-cliffs-overlay.dtsi:44-54 sets the MBHC
-	 * thresholds, not the bias voltages; the bias values in
-	 * cliffs-audio-overlay.dtsi:330-332 are 1800 mV). The reset line is
+	 * oplus/cliffs-audio-overlay-common.dtsi:33-39). The three mic biases
+	 * are 2700 mV, the OEM common overlay's value for this codec
+	 * (oplus/cliffs-audio-overlay-common.dtsi:34-38). The reset line is
 	 * LPASS LPI GPIO12 (see the state below).
 	 *
 	 * The variant is not recorded anywhere downstream: the driver accepts
@@ -154,9 +152,9 @@
 		vdd-px-supply = <&vreg_l7b_1p8>;
 		vdd-mic-bias-supply = <&vreg_bob>;
 
-		qcom,micbias1-microvolt = <1800000>;
-		qcom,micbias2-microvolt = <1800000>;
-		qcom,micbias3-microvolt = <1800000>;
+		qcom,micbias1-microvolt = <2700000>;
+		qcom,micbias2-microvolt = <2700000>;
+		qcom,micbias3-microvolt = <2700000>;
 		/*
 		 * The board wires three mic biases (downstream enables
 		 * MIC BIAS1-3 only, oplus/avalon-24211-audio-cliffs-overlay.dtsi:48-54).
@@ -198,18 +196,16 @@
 		 * for both, odm/etc/resourcemanager.xml in the stock odm image),
 		 * and the stock routing joins the codec's third input to MIC
 		 * BIAS3 as well.  The last two routes join the codec's ADC
-		 * outputs to the TX macro's SoundWire inputs: the codec's TX
-		 * port mapping puts ADC1 and ADC2 on master port 2
-		 * (qcom,tx-port-mapping = <2 2 3 4>, the same table the SM8550
-		 * WCD9385 boards use), and master port 2 carries TX SWR_INPUT0..3
-		 * (lpass-tx-macro.c's v9_2 widget set, which the SM8550 macro
-		 * data selects).
+		 * outputs to the TX macro's SoundWire inputs: ADC1 is the
+		 * codec's master port 1 (TX SWR_INPUT0) and ADC2 its master
+		 * port 2 (TX SWR_INPUT4), the OEM overlay's table
+		 * (qcom,tx-port-mapping = <1 2 3 4>).
 		 */
 		audio-routing = "AMIC1", "MIC BIAS1",
 				"AMIC2", "MIC BIAS2",
 				"AMIC3", "MIC BIAS3",
 				"TX SWR_INPUT0", "ADC1_OUTPUT",
-				"TX SWR_INPUT1", "ADC2_OUTPUT";
+				"TX SWR_INPUT4", "ADC2_OUTPUT";
 
 		wcd-playback-dai-link {
 			link-name = "WCD Playback";
@@ -1482,11 +1478,10 @@
  * arch/arm64/boot/dts/qcom/qcm6490-idp.dts:938-977 for a WCD9370).
  * The port mappings are the static ones downstream writes for this board:
  * RX HPH->1, CLSH->2, COMP->3, LO->4, DSD->5
- * (audio-devicetree/cliffs-audio-overlay.dtsi:292-299) and TX 1/2->2, 3->3,
- * 4->4 (the VA master's SWRM_TX1..TX3 channel groups,
- * cliffs-audio-overlay.dtsi:55-60, and the WCD9370 mapping in the binding
- * above). The channel maps are left out: downstream's mask values do not
- * translate one-for-one and capture is not part of this bring-up.
+ * (audio-devicetree/cliffs-audio-overlay.dtsi:292-299) and TX ADC1->1,
+ * ADC2->2, 3->3, 4->4 (qcom,tx-port-mapping = <1 2 3 4>, the OEM overlay's
+ * table; capture is not part of this bring-up). The channel maps are left
+ * out: downstream's mask values do not translate one-for-one.
  */
 &swr1 {
 	wcd937x_rx: codec@0,4 {
@@ -1503,7 +1498,7 @@
 		compatible = "sdw20217010a00";
 		reg = <0 3>;
 
-		qcom,tx-port-mapping = <2 2 3 4>;
+		qcom,tx-port-mapping = <1 2 3 4>;
 
 	};
 };
