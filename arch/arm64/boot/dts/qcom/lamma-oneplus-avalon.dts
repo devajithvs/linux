@@ -1395,24 +1395,25 @@
 		pinctrl-names = "default";
 
 		/*
-		 * The per-master-port transport parameters. Ports 1-4 are
-		 * sm8550.dtsi's swr2 values (3423-3431): qcom,tx-port-mapping
-		 * puts DP1/ADC1 on port 2 and DP2/ADC2 (and DP3) on port 3,
-		 * so each is programmed with a real sample interval instead of
-		 * the old 0xff stub, which the driver turned into
-		 * sample_interval 0x100. Port 5 is the master's PCM port, which
-		 * no slave data port maps to; it keeps the unused marker.
+		 * The per-master-port transport parameters are the Avalon
+		 * vendor's UC0 set (9.6 MHz bus): ports 2 and 3, where
+		 * qcom,tx-port-mapping puts DP1/ADC1 and DP2/ADC2 (and
+		 * DP3), run with sample interval 3 and no lane split on
+		 * port 2 (lane 0) and lane 1 on port 3. Port 1 (the
+		 * master's PCM-out) and port 5 (PCM in) keep 0xff, which
+		 * qcom.c treats as "do not program" (SWR_INVALID_PARAM),
+		 * so their lane-control register is never written.
 		 */
 		qcom,ports-sinterval-low = /bits/ 8 <
-			0x01 0x01 0x03 0x03 0xff>;
+			0x00 0x03 0x03 0x03 0xff>;
 		qcom,ports-offset1 = /bits/ 8 <
-			0x00 0x00 0x01 0x01 0x00>;
+			0x00 0x01 0x00 0x01 0x00>;
 		qcom,ports-offset2 = /bits/ 8 <
 			0x00 0x00 0x00 0x00 0x00>;
 		qcom,ports-block-pack-mode = /bits/ 8 <
 			0xff 0xff 0xff 0xff 0xff>;
 		qcom,ports-lane-control = /bits/ 8 <
-			0x01 0x02 0x00 0x00 0x00>;
+			0xff 0x00 0x01 0x00 0xff>;
 
 		#address-cells = <2>;
 		#size-cells = <0>;
