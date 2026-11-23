@@ -85,6 +85,7 @@
 
 /* word registers F0440's stream-on readback reports */
 #define S5K3P9_REG_LANE_MODE		0x0114
+#define S5K3P9_REG_CSI2_FORMAT		0x0112
 #define S5K3P9_REG_EXTCLK		0x0136
 #define S5K3P9_REG_PLL_PRE_DIV		0x0304
 #define S5K3P9_REG_PLL_MULT		0x0306
@@ -1717,6 +1718,14 @@ static const struct s5k3p9_reg s5k3p9_mode_regs[] = {
 	{ 0x0d02, 0x0001 },
 	{ 0x0804, 0x0200 },
 	{ 0x0810, 0x0020 },
+	/*
+	 * F0443: the phone's own mode programme (vendor/lib64/camera/s5k3p9_*.pb,
+	 * mode field 19) ends with this write, immediately before 0x0100 = 1:
+	 * the CSI-2 output format latch. Without it CSID1's RDI0, armed for
+	 * RAW10 (0x2B) on VC0, has no matching packet and captures 0 bytes with
+	 * no error (all CSI2 RX error IRQs are masked in camss-csid-gen3.c).
+	 */
+	{ 0x0112, 0x0a0a },
 };
 
 static const s64 s5k3p9_link_freq_menu[] = {
@@ -1831,7 +1840,7 @@ static void s5k3p9_power_off(struct s5k3p9 *sensor)
 static void s5k3p9_stream_report(struct s5k3p9 *sensor, const char *what)
 {
 	unsigned int mode = 0, frame = 0, lanes = 0, extclk = 0;
-	unsigned int pre = 0, mult = 0, pre2 = 0, mult2 = 0;
+	unsigned int fmt = 0, pre = 0, mult = 0, pre2 = 0, mult2 = 0;
 	int ret;
 
 	/* F0440: the driver had no readback path; report what the part holds */
@@ -1841,6 +1850,9 @@ static void s5k3p9_stream_report(struct s5k3p9 *sensor, const char *what)
 				  &frame);
 	if (!ret)
 		ret = regmap_read(sensor->regmap, S5K3P9_REG_LANE_MODE, &lanes);
+	/* F0443: the vendor mode programme's last write before stream-on */
+	if (!ret)
+		ret = regmap_read(sensor->regmap, S5K3P9_REG_CSI2_FORMAT, &fmt);
 	if (!ret)
 		ret = regmap_read(sensor->regmap, S5K3P9_REG_EXTCLK, &extclk);
 	if (!ret)
@@ -1855,9 +1867,9 @@ static void s5k3p9_stream_report(struct s5k3p9 *sensor, const char *what)
 				  &mult2);
 
 	dev_info(sensor->sd.dev,
-		 "%s: ctrl 0x%02x frame_count %u lane_mode 0x%04x extclk 0x%04x pll %u/%u pll2 %u/%u%s\n",
-		 what, mode, frame, lanes, extclk, pre, mult, pre2, mult2,
-		 ret ? " (readback failed)" : "");
+		 "%s: ctrl 0x%02x frame_count %u lane_mode 0x%04x csi2_fmt 0x%04x extclk 0x%04x pll %u/%u pll2 %u/%u%s\n",
+		 what, mode, frame, lanes, fmt, extclk, pre, mult, pre2,
+		 mult2, ret ? " (readback failed)" : "");
 }
 
 static int s5k3p9_s_stream(struct v4l2_subdev *sd, int enable)
