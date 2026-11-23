@@ -1676,7 +1676,7 @@
 
 	cam_mclk4_default: cam-mclk4-default-state {
 		pins = "gpio68";
-		function = "cam_mclk";
+		function = "cam_aon_mclk4";
 		drive-strength = <2>;
 		bias-disable;
 	};
@@ -1822,7 +1822,8 @@
 
 /*
  * The front camera (Open entry 46's second step): Samsung S5K3P9 on the AP's
- * qupv3_se8 bus at 0x20, CSIPHY4, MCLK4 19.2 MHz on GPIO 68, reset on GPIO 3.
+ * qupv3_se8 bus at 7-bit 0x10 (the vendor's 8-bit 0x20), CSIPHY4, MCLK4 19.2 MHz
+ * on GPIO 68, reset on GPIO 3.
  * Rails from the vendor overlay: AVDD1 2.8 V and DVDD1 1.05 V from the
  * AW37004, I/O from L23B. The register programme is not in any public source
  * (F0380), so the driver is a skeleton, but the node is enabled for the
@@ -1832,9 +1833,9 @@
 	status = "okay";
 	clock-frequency = <1000000>;
 
-	s5k3p9: camera@20 {
+	s5k3p9: camera@10 {
 		compatible = "samsung,s5k3p9";
-		reg = <0x20>;
+		reg = <0x10>;
 
 		clocks = <&camcc CAM_CC_MCLK4_CLK>;
 		assigned-clocks = <&camcc CAM_CC_MCLK4_CLK>;
@@ -1845,6 +1846,7 @@
 		vana-supply = <&cam_avdd1>;
 		vdig-supply = <&cam_dvdd1>;
 		vio-supply = <&vreg_l23b>;
+		power-domains = <&camcc CAM_CC_TITAN_TOP_GDSC>;
 
 		pinctrl-0 = <&cam_mclk4_default &cam_reset3_default>;
 		pinctrl-names = "default";

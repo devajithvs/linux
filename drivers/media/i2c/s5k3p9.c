@@ -39,7 +39,6 @@
 #define S5K3P9_HEIGHT			3456
 
 #define S5K3P9_REG_CHIP_ID		0x0000
-#define S5K3P9_REG_CHIP_ID_LSB		0x0001
 #define S5K3P9_CHIP_ID			0x3109
 #define S5K3P9_REG_CTRL_MODE		0x0100
 #define S5K3P9_MODE_STREAMING		BIT(0)
@@ -49,7 +48,7 @@
 
 struct s5k3p9_reg {
 	u16 reg;
-	u8 val;
+	u16 val;
 };
 
 struct s5k3p9_supply {
@@ -78,7 +77,7 @@ static const struct s5k3p9_reg s5k3p9_mode_regs[] = {
 
 static const struct regmap_config s5k3p9_regmap_config = {
 	.reg_bits = 16,
-	.val_bits = 8,
+	.val_bits = 16,
 	.max_register = 0xffff,
 };
 
@@ -327,7 +326,7 @@ static int s5k3p9_probe(struct i2c_client *client)
 	struct device *dev = &client->dev;
 	struct s5k3p9 *sensor;
 	unsigned long freq;
-	u32 chip_id_msb = 0, chip_id_lsb = 0;
+	u32 chip_id;
 	int ret, i;
 
 	sensor = devm_kzalloc(dev, sizeof(*sensor), GFP_KERNEL);
@@ -389,26 +388,19 @@ static int s5k3p9_probe(struct i2c_client *client)
 	if (ret)
 		goto err_entity;
 
-	ret = regmap_read(sensor->regmap, S5K3P9_REG_CHIP_ID, &chip_id_msb);
-	if (!ret)
-		ret = regmap_read(sensor->regmap, S5K3P9_REG_CHIP_ID_LSB,
-				  &chip_id_lsb);
+	ret = regmap_read(sensor->regmap, S5K3P9_REG_CHIP_ID, &chip_id);
 	if (ret)
 		dev_info(dev, "chip ID read failed (%d); the power sequence is unverified\n",
 			 ret);
-	else {
-		u16 chip_id = (chip_id_msb << 8) | (chip_id_lsb & 0xff);
-
-		dev_info(dev, "chip ID 0x%04x from 0x0000=0x%02x 0x0001=0x%02x at 0x%02x (%s)\n",
-			 chip_id, chip_id_msb, chip_id_lsb, client->addr,
+	else
+		dev_info(dev, "chip ID 0x%04x at 7-bit 0x%02x (%s)\n",
+			 chip_id, client->addr,
 			 chip_id == S5K3P9_CHIP_ID ? "expected" : "unexpected");
-	}
 
 	s5k3p9_power_off(sensor);
 
-	pm_runtime_set_active(dev);
+	pm_runtime_set_suspended(dev);
 	pm_runtime_enable(dev);
-	pm_runtime_idle(dev);
 
 	ret = v4l2_async_register_subdev_sensor(&sensor->sd);
 	if (ret)
