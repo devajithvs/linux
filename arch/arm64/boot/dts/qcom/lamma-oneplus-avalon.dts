@@ -1441,6 +1441,13 @@
 		 * master's PCM-out) and port 5 (PCM in) keep 0xff, which
 		 * qcom.c treats as "do not program" (SWR_INVALID_PARAM),
 		 * so their lane-control register is never written.
+		 *
+		 * The word length is the codec ADC's 24-bit word
+		 * (0x17 = bps - 1) on the same three ports: four slots of
+		 * 24 bits are the 100-bit frame of the 4.8 MHz bus. Without
+		 * the property qcom.c skips sdw_fill_port_params() and
+		 * writes 0xff into DPN_BlockCtrl1 on the codec and on the
+		 * master.
 		 */
 		qcom,ports-sinterval-low = /bits/ 8 <
 			0x00 0x03 0x03 0x03 0xff>;
@@ -1450,6 +1457,8 @@
 			0x00 0x00 0x00 0x00 0x00>;
 		qcom,ports-block-pack-mode = /bits/ 8 <
 			0xff 0xff 0xff 0xff 0xff>;
+		qcom,ports-word-length = /bits/ 8 <
+			0xff 0x17 0x17 0x17 0xff>;
 		qcom,ports-lane-control = /bits/ 8 <
 			0xff 0x00 0x01 0x00 0xff>;
 
