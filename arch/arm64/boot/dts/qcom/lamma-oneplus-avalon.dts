@@ -1687,6 +1687,24 @@
 		drive-strength = <2>;
 		bias-disable;
 	};
+
+	/*
+	 * The main camera's MCLK0 and reset, from the vendor overlay: MCLK0 at
+	 * 24 MHz on TLMM 64, reset on TLMM 15.
+	 */
+	cam_mclk0_default: cam-mclk0-default-state {
+		pins = "gpio64";
+		function = "cam_mclk";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	cam_reset15_default: cam-reset15-default-state {
+		pins = "gpio15";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
 };
 
 /*
@@ -1720,7 +1738,7 @@
 			regulator-max-microvolt = <1800000>;
 		};
 
-		dvdd2 {
+		cam_dvdd2: dvdd2 {
 			regulator-name = "cam_dvdd2";
 			regulator-min-microvolt = <600000>;
 			regulator-max-microvolt = <1800000>;
@@ -1732,7 +1750,7 @@
 			regulator-max-microvolt = <2800000>;
 		};
 
-		avdd2 {
+		cam_avdd2: avdd2 {
 			regulator-name = "cam_avdd2";
 			regulator-min-microvolt = <2800000>;
 			regulator-max-microvolt = <2800000>;
@@ -1742,6 +1760,36 @@
 
 &cci0 {
 	status = "okay";
+};
+
+/*
+ * The main camera (Sony IMX882) on CCI0 master 0 at 0x1a, CSIPHY0. The
+ * vendor overlay gives MCLK0 24 MHz on TLMM 64, reset on TLMM 15, AVDD2
+ * 2.8 V and DVDD2 1.05 V from the AW37004 and I/O from L23B; the slave
+ * address is not in that overlay and 0x1a is the address the module's
+ * downstream sensor driver lists. Probe-only: no mode table and no PHY
+ * mode yet, so the node has no CSI2 endpoint.
+ */
+&cci0_i2c0 {
+	imx882: camera@1a {
+		compatible = "sony,imx882";
+		reg = <0x1a>;
+
+		clocks = <&camcc CAM_CC_MCLK0_CLK>;
+		assigned-clocks = <&camcc CAM_CC_MCLK0_CLK>;
+		assigned-clock-rates = <24000000>;
+
+		reset-gpios = <&tlmm 15 GPIO_ACTIVE_LOW>;
+
+		avdd-supply = <&cam_avdd2>;
+		dvdd-supply = <&cam_dvdd2>;
+		dovdd-supply = <&vreg_l23b>;
+
+		pinctrl-0 = <&cam_mclk0_default &cam_reset15_default>;
+		pinctrl-names = "default";
+
+		status = "okay";
+	};
 };
 
 &cci0_i2c1 {
@@ -1777,7 +1825,8 @@
  * qupv3_se8 bus at 0x20, CSIPHY4, MCLK4 19.2 MHz on GPIO 68, reset on GPIO 3.
  * Rails from the vendor overlay: AVDD1 2.8 V and DVDD1 1.05 V from the
  * AW37004, I/O from L23B. The register programme is not in any public source
- * (F0380), so the driver is a skeleton and the node stays disabled.
+ * (F0380), so the driver is a skeleton, but the node is enabled for the
+ * chip-ID probe (the module is not in the daily rootfs).
  */
 &i2c8 {
 	status = "okay";
@@ -1800,7 +1849,7 @@
 		pinctrl-0 = <&cam_mclk4_default &cam_reset3_default>;
 		pinctrl-names = "default";
 
-		status = "disabled";
+		status = "okay";
 
 		port {
 			s5k3p9_ep: endpoint {

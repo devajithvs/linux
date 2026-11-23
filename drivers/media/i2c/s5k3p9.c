@@ -39,6 +39,8 @@
 #define S5K3P9_HEIGHT			3456
 
 #define S5K3P9_REG_CHIP_ID		0x0000
+#define S5K3P9_REG_CHIP_ID_LSB		0x0001
+#define S5K3P9_CHIP_ID			0x3109
 #define S5K3P9_REG_CTRL_MODE		0x0100
 #define S5K3P9_MODE_STREAMING		BIT(0)
 #define S5K3P9_REG_ORIENTATION		0x0101
@@ -325,7 +327,7 @@ static int s5k3p9_probe(struct i2c_client *client)
 	struct device *dev = &client->dev;
 	struct s5k3p9 *sensor;
 	unsigned long freq;
-	u32 chip_id = 0;
+	u32 chip_id_msb = 0, chip_id_lsb = 0;
 	int ret, i;
 
 	sensor = devm_kzalloc(dev, sizeof(*sensor), GFP_KERNEL);
@@ -387,13 +389,20 @@ static int s5k3p9_probe(struct i2c_client *client)
 	if (ret)
 		goto err_entity;
 
-	ret = regmap_read(sensor->regmap, S5K3P9_REG_CHIP_ID, &chip_id);
+	ret = regmap_read(sensor->regmap, S5K3P9_REG_CHIP_ID, &chip_id_msb);
+	if (!ret)
+		ret = regmap_read(sensor->regmap, S5K3P9_REG_CHIP_ID_LSB,
+				  &chip_id_lsb);
 	if (ret)
 		dev_info(dev, "chip ID read failed (%d); the power sequence is unverified\n",
 			 ret);
-	else
-		dev_info(dev, "chip ID 0x%02x answered at 0x%02x\n",
-			 chip_id, client->addr);
+	else {
+		u16 chip_id = (chip_id_msb << 8) | (chip_id_lsb & 0xff);
+
+		dev_info(dev, "chip ID 0x%04x from 0x0000=0x%02x 0x0001=0x%02x at 0x%02x (%s)\n",
+			 chip_id, chip_id_msb, chip_id_lsb, client->addr,
+			 chip_id == S5K3P9_CHIP_ID ? "expected" : "unexpected");
+	}
 
 	s5k3p9_power_off(sensor);
 
