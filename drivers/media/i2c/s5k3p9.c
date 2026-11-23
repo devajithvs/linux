@@ -290,7 +290,7 @@ static int s5k3p9_get_hwcfg(struct s5k3p9 *sensor)
 	if (!fwnode)
 		return dev_err_probe(dev, -ENODEV, "no CSI2 endpoint\n");
 
-	ret = v4l2_fwnode_endpoint_parse(fwnode, &ep);
+	ret = v4l2_fwnode_endpoint_alloc_parse(fwnode, &ep);
 	if (ret)
 		goto out;
 
