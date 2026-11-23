@@ -47,29 +47,22 @@
 /*
  * PLL at the board's 19.2 MHz MCLK (registers 0x0136 and 0x0300-0x0312):
  *
- *   VCO    = MCLK / pre_pll_clk_div * pll_multiplier = 19.2 MHz / 4 * 175
- *          = 840 MHz
- *   pixclk = VCO / vt_pix_clk_div * DATA_LANES = 840 MHz / 7 * 4 = 480 MHz
- *   link   = pixclk * 10 / (2 * DATA_LANES) = 480 MHz * 10 / 8 = 600 MHz
+ *   VCO    = MCLK / pre_pll_clk_div * pll_multiplier = 19.2 MHz / 5 * 255
+ *          = 979.2 MHz
+ *   pixclk = VCO / vt_pix_clk_div * DATA_LANES = 979.2 MHz / 7 * 4 = 559.5 MHz
  *
  * 0x0136 is the MCLK in units of 1/256 MHz: 19.2 * 256 = 4915.2 -> 4915
  * (0x1333), where the 24 MHz table has 24 * 256 = 6144 (0x1800).
  *
- * The 24 MHz MediaTek table's 6/245 pair gives a 980 MHz VCO, a 560 MHz
- * pixel clock and a 700 MHz link. Keeping that VCO at 19.2 MHz would need
- * 7.5/306.25, so no 5/4 scaling of the integer registers is exact; 4/175 is
- * the exact pair for the DT's 600 MHz link (700 MHz * 6/7).
+ * This is the phone's own 19.2 MHz clock block, not the MediaTek 6/245
+ * retime of F0443: `vendor/lib64/camera/s5k3p9_2.pb` (and `s5k3p9_3.pb`)
+ * writes one 0x0300 entry with ten word values, 7,1,5,255,8,1,0,3,94,2,
+ * and 0x0136 = 0x1333. 19.2/5 * 255 = 979.2 MHz keeps the 560 MHz pixel
+ * clock the 24 MHz programme has (24/6 * 245 = 980 MHz -> 980/7*4 = 560
+ * MHz), and 0x030E/0x0310 = 3/94 gives 19.2/3 * 94 = 601.6 MHz on the
+ * second PLL, which is the DT's 600 MHz link.
  *
- * 0x030E/0x0310 are a second PLL on this block, (MCLK / 0x030E) * 0x0310, and
- * are as MCLK-dependent as the main one. The 24 MHz table's 4/112 is 672 MHz;
- * with the divider left at 4 the board's 19.2 MHz gives 537.6 MHz, which is
- * the no-frame state of F0442. Both mainline drivers for this register block
- * retime the pair with the MCLK to hold the product: s5k3m5.c carries 3/90
- * (720 MHz) at 24 MHz, and s5kjn1's 19.2 MHz support turns its 24 MHz 4/146
- * into 3/137 (876 -> 876.8 MHz) alongside 0x0304/0x0306. So 19.2/3 * 105 =
- * 672 MHz exactly, the 24 MHz table's own second clock.
- *
- * At the table's 7,152 x 2,608 line and frame length, 480 MHz is 25.7 fps.
+ * At the table's 7,152 x 2,608 line and frame length, 559.5 MHz is 30.0 fps.
  */
 
 #define S5K3P9_REG_CHIP_ID		0x0000
@@ -1701,14 +1694,14 @@ static const struct s5k3p9_reg s5k3p9_mode_regs[] = {
 	{ 0x0136, 0x1333 },	/* 0x1800 at 24 MHz */
 	{ 0x0300, 0x0007 },
 	{ 0x0302, 0x0001 },
-	{ 0x0304, 0x0004 },	/* 0x0006 at 24 MHz */
-	{ 0x0306, 0x00af },	/* 0x00f5 at 24 MHz */
+	{ 0x0304, 0x0005 },	/* phone mode: 19.2/5 * 255 = 979.2 MHz */
+	{ 0x0306, 0x00ff },
 	{ 0x0308, 0x0008 },
 	{ 0x030a, 0x0001 },
 	{ 0x030c, 0x0000 },
-	{ 0x030e, 0x0003 },	/* 0x0004 at 24 MHz: 19.2/3 * 105 = 672 MHz */
-	{ 0x0310, 0x0069 },	/* 0x0070 at 24 MHz: 24/4 * 112 = 672 MHz */
-	{ 0x0312, 0x0001 },
+	{ 0x030e, 0x0003 },	/* phone mode: 19.2/3 * 94 = 601.6 MHz */
+	{ 0x0310, 0x005e },
+	{ 0x0312, 0x0002 },
 	{ 0x0340, 0x0a30 },
 	{ 0x0342, 0x1bf0 },
 	{ 0x0202, 0x0100 },
