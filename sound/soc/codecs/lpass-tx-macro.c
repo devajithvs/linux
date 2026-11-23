@@ -2133,14 +2133,18 @@ static int tx_macro_component_probe(struct snd_soc_component *comp)
 	tx->component = comp;
 
 	/*
-	 * F0417: the three SWR microphone clock register writes that used to
-	 * stand here (CDC_TX0_TX_PATH_SEC7 and the AMIC0/AMIC1 clock controls)
-	 * run the first time a card binds this macro's DAI, after the codec's
-	 * TX SoundWire slave has already attached, and the slave alerts at that
-	 * moment.  This build omits only them: everything else in the probe is
-	 * unchanged, so a card that registers with a still-Attached TX slave
-	 * implicates these writes and nothing else.
+	 * F0417: the two legacy SWR AMIC clock writes (CDC_TX_TOP_CSR_SWR_AMIC0_CTL
+	 * and _AMIC1_CTL) stay out.  They are sc7280-era registers, absent from
+	 * the stock SM8550 TX-macro driver, and the value written was 0, the
+	 * driver's own cache default.
+	 *
+	 * CDC_TX0_TX_PATH_SEC7 is a different case: the stock SM8550 driver's only
+	 * TX-macro init write is this one, closing bits 5:0 to 0x0A
+	 * (asoc/codecs/lpass-cdc/lpass-cdc-tx-macro.c:1990-1993).  The hardware
+	 * default is 0x25 (tx_defaults above), so omitting it leaves the SWR mic
+	 * datapath unconfigured and the decimators read a constant.
 	 */
+	snd_soc_component_update_bits(comp, CDC_TX0_TX_PATH_SEC7, 0x3F, 0x0A);
 
 	return 0;
 }
