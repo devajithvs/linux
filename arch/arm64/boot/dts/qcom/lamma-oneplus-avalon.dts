@@ -197,9 +197,10 @@
 		 * and the stock routing joins the codec's third input to MIC
 		 * BIAS3 as well.  The last two routes join the codec's ADC
 		 * outputs to the TX macro's SoundWire inputs: ADC1 is the
-		 * codec's master port 1 (TX SWR_INPUT0) and ADC2 its master
-		 * port 2 (TX SWR_INPUT4), the OEM overlay's table
-		 * (qcom,tx-port-mapping = <1 2 3 4>).
+		 * codec's master port 2 (TX SWR_INPUT0) and ADC2 its master
+		 * port 3 (TX SWR_INPUT4), the OEM overlay's table
+		 * (ADC1 -> SWRM_TX1_CH1, ADC2 -> SWRM_TX2_CH1) as
+		 * qcom,tx-port-mapping = <2 3 3 4>.
 		 */
 		audio-routing = "AMIC1", "MIC BIAS1",
 				"AMIC2", "MIC BIAS2",
@@ -431,7 +432,7 @@
 		 */
 		vreg_bob: bob {
 			regulator-name = "vreg_bob";
-			regulator-min-microvolt = <3008000>;
+			regulator-min-microvolt = <3296000>;
 			regulator-max-microvolt = <3960000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
@@ -1393,16 +1394,25 @@
 		pinctrl-0 = <&tx_swr_active>;
 		pinctrl-names = "default";
 
+		/*
+		 * The per-master-port transport parameters. Ports 1-4 are
+		 * sm8550.dtsi's swr2 values (3423-3431): qcom,tx-port-mapping
+		 * puts DP1/ADC1 on port 2 and DP2/ADC2 (and DP3) on port 3,
+		 * so each is programmed with a real sample interval instead of
+		 * the old 0xff stub, which the driver turned into
+		 * sample_interval 0x100. Port 5 is the master's PCM port, which
+		 * no slave data port maps to; it keeps the unused marker.
+		 */
 		qcom,ports-sinterval-low = /bits/ 8 <
-			0xff 0xff 0xff 0xff 0xff>;
+			0x01 0x01 0x03 0x03 0xff>;
 		qcom,ports-offset1 = /bits/ 8 <
-			0x00 0x01 0x01 0x01 0x00>;
+			0x00 0x00 0x01 0x01 0x00>;
 		qcom,ports-offset2 = /bits/ 8 <
 			0x00 0x00 0x00 0x00 0x00>;
 		qcom,ports-block-pack-mode = /bits/ 8 <
 			0xff 0xff 0xff 0xff 0xff>;
 		qcom,ports-lane-control = /bits/ 8 <
-			0x00 0x00 0x00 0x00 0x00>;
+			0x01 0x02 0x00 0x00 0x00>;
 
 		#address-cells = <2>;
 		#size-cells = <0>;
@@ -1440,9 +1450,11 @@
  * arch/arm64/boot/dts/qcom/qcm6490-idp.dts:938-977 for a WCD9370).
  * The port mappings are the static ones downstream writes for this board:
  * RX HPH->1, CLSH->2, COMP->3, LO->4, DSD->5
- * (audio-devicetree/cliffs-audio-overlay.dtsi:292-299) and TX ADC1->1,
- * ADC2->2, 3->3, 4->4 (qcom,tx-port-mapping = <1 2 3 4>, the OEM overlay's
- * table; capture is not part of this bring-up). The channel maps are left
+ * (audio-devicetree/cliffs-audio-overlay.dtsi:292-299). For TX, the OEM
+ * table (qcom,tx_swr_ch_map) sends ADC1 to SWRM_TX1_CH1 and ADC2 to
+ * SWRM_TX2_CH1, i.e. master ports 2 and 3, with DP3 also on port 3 and DP4
+ * on port 4: qcom,tx-port-mapping = <2 3 3 4>. That keeps the codec's
+ * decimators off master port 1 (SWRM_TX_PCM_OUT). The channel maps are left
  * out: downstream's mask values do not translate one-for-one.
  */
 &swr1 {
@@ -1460,7 +1472,7 @@
 		compatible = "sdw20217010a00";
 		reg = <0 3>;
 
-		qcom,tx-port-mapping = <1 2 3 4>;
+		qcom,tx-port-mapping = <2 3 3 4>;
 
 	};
 };
