@@ -13,6 +13,12 @@
  * The mode table is the MediaTek S5K3P9SP 2320x1744 preview programme
  * retimed from its 24 MHz MCLK to this board's 19.2 MHz (see the PLL note
  * below). It is the nearest public programme for this part family (F0406).
+ *
+ * 0x0100 (mode select) and 0x0005 (frame counter) are byte registers behind
+ * the 16-bit address: the vendor driver writes them with
+ * write_cmos_sensor_16_8(0x0100, 0x01). A 16-bit write lands 0x01 in 0x0101
+ * (mirror/flip) and leaves 0x0100 in software standby, which is why F0440's
+ * mode table produced no MIPI at all.
  */
 
 #include <linux/clk.h>
@@ -61,11 +67,20 @@
 
 #define S5K3P9_REG_CHIP_ID		0x0000
 #define S5K3P9_CHIP_ID			0x3109
+#define S5K3P9_REG_FRAME_COUNT		0x0005
+#define S5K3P9_FRAME_COUNT_STOPPED	0xff
 #define S5K3P9_REG_CTRL_MODE		0x0100
-#define S5K3P9_MODE_STREAMING		BIT(0)
+#define S5K3P9_STREAM_OFF		0x00
+#define S5K3P9_STREAM_ON		0x01
 #define S5K3P9_REG_ORIENTATION		0x0101
 #define S5K3P9_VFLIP			BIT(1)
 #define S5K3P9_HFLIP			BIT(0)
+
+/* word registers F0440's stream-on readback reports */
+#define S5K3P9_REG_LANE_MODE		0x0114
+#define S5K3P9_REG_EXTCLK		0x0136
+#define S5K3P9_REG_PLL_PRE_DIV		0x0304
+#define S5K3P9_REG_PLL_MULT		0x0306
 
 struct s5k3p9_reg {
 	u16 reg;
@@ -1705,6 +1720,19 @@ static const struct regmap_config s5k3p9_regmap_config = {
 	.max_register = 0xffff,
 };
 
+/*
+ * 0x0100 (mode select) and 0x0005 (frame counter) are 16-bit addressed and
+ * 8-bit wide: the vendor's own driver writes them with
+ * write_cmos_sensor_16_8(0x0100, 0x01) and reads the counter the same way
+ * (F0440). A 16-bit write puts the low byte in 0x0101 (mirror/flip) and
+ * leaves 0x0100 in software standby, so the sensor never streams.
+ */
+static const struct regmap_config s5k3p9_regmap8_config = {
+	.reg_bits = 16,
+	.val_bits = 8,
+	.max_register = 0xffff,
+};
+
 struct s5k3p9_mode {
 	u32 width;
 	u32 height;
@@ -1729,6 +1757,7 @@ struct s5k3p9 {
 	struct v4l2_subdev sd;
 	struct media_pad pad;
 	struct regmap *regmap;
+	struct regmap *regmap8;
 	struct clk *mclk;
 	struct gpio_desc *reset_gpio;
 	struct regulator_bulk_data supplies[ARRAY_SIZE(s5k3p9_supplies)];
@@ -1790,13 +1819,53 @@ static void s5k3p9_power_off(struct s5k3p9 *sensor)
 	regulator_bulk_disable(ARRAY_SIZE(s5k3p9_supplies), sensor->supplies);
 }
 
+static void s5k3p9_stream_report(struct s5k3p9 *sensor, const char *what)
+{
+	unsigned int mode = 0, frame = 0, lanes = 0, extclk = 0;
+	unsigned int pre = 0, mult = 0;
+	int ret;
+
+	/* F0440: the driver had no readback path; report what the part holds */
+	ret = regmap_read(sensor->regmap8, S5K3P9_REG_CTRL_MODE, &mode);
+	if (!ret)
+		ret = regmap_read(sensor->regmap8, S5K3P9_REG_FRAME_COUNT,
+				  &frame);
+	if (!ret)
+		ret = regmap_read(sensor->regmap, S5K3P9_REG_LANE_MODE, &lanes);
+	if (!ret)
+		ret = regmap_read(sensor->regmap, S5K3P9_REG_EXTCLK, &extclk);
+	if (!ret)
+		ret = regmap_read(sensor->regmap, S5K3P9_REG_PLL_PRE_DIV, &pre);
+	if (!ret)
+		ret = regmap_read(sensor->regmap, S5K3P9_REG_PLL_MULT, &mult);
+
+	dev_info(sensor->sd.dev,
+		 "%s: ctrl 0x%02x frame_count %u lane_mode 0x%04x extclk 0x%04x pll %u/%u%s\n",
+		 what, mode, frame, lanes, extclk, pre, mult,
+		 ret ? " (readback failed)" : "");
+}
+
 static int s5k3p9_s_stream(struct v4l2_subdev *sd, int enable)
 {
 	struct s5k3p9 *sensor = to_s5k3p9(sd);
-	int ret;
+	unsigned int frame = 0;
+	int ret, i;
 
 	if (!enable) {
-		regmap_write(sensor->regmap, S5K3P9_REG_CTRL_MODE, 0);
+		if (!regmap_write(sensor->regmap8, S5K3P9_REG_CTRL_MODE,
+				  S5K3P9_STREAM_OFF)) {
+			/* the vendor's stop check: 0x0005 reads 0xFF */
+			for (i = 0; i < 40; i++) {
+				fsleep(5000);
+				if (regmap_read(sensor->regmap8,
+						S5K3P9_REG_FRAME_COUNT,
+						&frame))
+					break;
+				if (frame == S5K3P9_FRAME_COUNT_STOPPED)
+					break;
+			}
+			s5k3p9_stream_report(sensor, "stream off");
+		}
 		sensor->streaming = false;
 		pm_runtime_put(sd->dev);
 		return 0;
@@ -1807,15 +1876,25 @@ static int s5k3p9_s_stream(struct v4l2_subdev *sd, int enable)
 	if (ret)
 		return ret;
 
+	/* the mode registers are written in software standby */
+	ret = regmap_write(sensor->regmap8, S5K3P9_REG_CTRL_MODE,
+			   S5K3P9_STREAM_OFF);
+	if (ret)
+		goto err_pm;
+
 	ret = s5k3p9_write_table(sensor, sensor->mode->regs,
 				 sensor->mode->num_regs);
 	if (ret)
 		goto err_pm;
 
-	ret = regmap_write(sensor->regmap, S5K3P9_REG_CTRL_MODE,
-			   S5K3P9_MODE_STREAMING);
+	ret = regmap_write(sensor->regmap8, S5K3P9_REG_CTRL_MODE,
+			   S5K3P9_STREAM_ON);
 	if (ret)
 		goto err_pm;
+
+	/* a few frame periods at 25.7 fps, so 0x0005 has advanced */
+	msleep(100);
+	s5k3p9_stream_report(sensor, "stream on");
 
 	sensor->streaming = true;
 	return 0;
@@ -2016,6 +2095,11 @@ static int s5k3p9_probe(struct i2c_client *client)
 	if (IS_ERR(sensor->regmap))
 		return dev_err_probe(dev, PTR_ERR(sensor->regmap),
 				     "failed to init regmap\n");
+
+	sensor->regmap8 = devm_regmap_init_i2c(client, &s5k3p9_regmap8_config);
+	if (IS_ERR(sensor->regmap8))
+		return dev_err_probe(dev, PTR_ERR(sensor->regmap8),
+				     "failed to init 8-bit regmap\n");
 
 	sensor->mclk = devm_v4l2_sensor_clk_get(dev, NULL);
 	if (IS_ERR(sensor->mclk))
