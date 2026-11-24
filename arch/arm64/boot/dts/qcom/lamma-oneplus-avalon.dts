@@ -1193,9 +1193,13 @@
  * this node carries them: led-0 = 1+4 lights the bottom emitter and
  * led-1 = 2+3 the top one, each at full brightness and fault-free (F0475).
  * Only the torch is described — no flash-max-* properties, so the strobe
- * path stays unreachable — and each LED is limited to a tenth of the
- * downstream torch current of 500 mA per channel (qcom/pmxr2230.dtsi:167-201),
- * which the driver splits across the two channels.
+ * path stays unreachable. Each LED carries the downstream torch current of
+ * 500 mA per channel, 1 A per two-channel LED (qcom/pmxr2230.dtsi:167-201,
+ * F0458), which the driver splits across its two channels. The value also
+ * programs the torch clamp register (0xed on this 4-channel map,
+ * torch_clamp = per-channel / 5 mA - 1, leds-qcom-flash.c:772-779): 1 A gives
+ * clamp 99 = 0x63, the same code as ITARGET, so a 0x63 ITARGET no longer
+ * resolves to 25 mA as it did with <50000> (F0476).
  */
 &pm7550_flash {
 	status = "okay";
@@ -1205,7 +1209,7 @@
 		color = <LED_COLOR_ID_WHITE>;
 		function-enumerator = <0>;
 		led-sources = <1>, <4>;	/* switch0 pair, bottom emitter (F0475) */
-		led-max-microamp = <50000>;
+		led-max-microamp = <1000000>;
 	};
 
 	led-1 {
@@ -1213,7 +1217,7 @@
 		color = <LED_COLOR_ID_WHITE>;
 		function-enumerator = <1>;
 		led-sources = <2>, <3>;	/* switch1 pair, top emitter (F0475) */
-		led-max-microamp = <50000>;
+		led-max-microamp = <1000000>;
 	};
 };
 
