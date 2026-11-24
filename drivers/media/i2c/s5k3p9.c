@@ -65,8 +65,8 @@ MODULE_PARM_DESC(reg_override, "writes after the mode block: addr=val[:b],... (b
 #define S5K3P9_LINK_FREQ		(563200000LL)	/* stock mode: 19.2/3*88 */
 #define S5K3P9_LINK_FREQ_DT		(600000000LL)	/* board DT link-frequencies */
 #define S5K3P9_PIXEL_RATE		(480000000LL)
-#define S5K3P9_WIDTH			2320
-#define S5K3P9_HEIGHT			1744
+#define S5K3P9_WIDTH			2304
+#define S5K3P9_HEIGHT			1728
 
 /*
  * PLL at the board's 19.2 MHz MCLK (registers 0x0136 and 0x0300-0x0312):
@@ -112,6 +112,7 @@ MODULE_PARM_DESC(reg_override, "writes after the mode block: addr=val[:b],... (b
 struct s5k3p9_reg {
 	u16 reg;
 	u16 val;
+	u8 bytes;	/* 0 = 16-bit data (vendor type 2), 8 = byte (type 1) */
 };
 
 struct s5k3p9_supply {
@@ -1661,8 +1662,13 @@ static const struct s5k3p9_reg s5k3p9_init_regs[] = {
 };
 
 /*
- * MediaTek S5K3P9SP 2320x1744 preview (F0406), PLL retimed for 19.2 MHz MCLK
- * and the DT's 600 MHz link: 0x0136 = 0x1333, 0x0304 = 4, 0x0306 = 175.
+ * Stock's 82-entry front mode block, verbatim (F0481, F0487): 2304x1728,
+ * 0x0340 = 3008 lines, 0x0342 = 6144 px, VCO 979.2 MHz / 7 * 4 = 559.5 MHz,
+ * PLL2 3/88 = 563.2 Mbps/lane, 0x0312 = 0, and the vendor's own per-stream
+ * group-held exposure set at the end. The last ten entries are the apply
+ * block; its frame-length and exposure registers are byte writes (the vendor's
+ * data type 1), which is what the "bytes" member selects. The stream-on pair
+ * (16-bit 0x0100 = 0x0103, then 0x0101 = 3) is written by s5k3p9_s_stream.
  */
 static const struct s5k3p9_reg s5k3p9_mode_regs[] = {
 	{ 0x6028, 0x4000 },
@@ -1698,12 +1704,12 @@ static const struct s5k3p9_reg s5k3p9_mode_regs[] = {
 	{ 0x602a, 0x1758 },
 	{ 0x6f12, 0x0000 },
 	{ 0x6028, 0x4000 },
-	{ 0x0344, 0x0000 },
-	{ 0x0346, 0x0008 },
-	{ 0x0348, 0x122f },
-	{ 0x034a, 0x0da7 },
-	{ 0x034c, 0x0910 },
-	{ 0x034e, 0x06d0 },
+	{ 0x0344, 0x0010 },
+	{ 0x0346, 0x0018 },
+	{ 0x0348, 0x121f },
+	{ 0x034a, 0x0d97 },
+	{ 0x034c, 0x0900 },
+	{ 0x034e, 0x06c0 },
 	{ 0x0350, 0x0004 },
 	{ 0x0900, 0x0122 },
 	{ 0x0380, 0x0002 },
@@ -1715,32 +1721,39 @@ static const struct s5k3p9_reg s5k3p9_mode_regs[] = {
 	{ 0x0400, 0x1010 },
 	{ 0x0114, 0x0300 },
 	{ 0x0110, 0x1002 },
-	{ 0x0136, 0x1333 },	/* 0x1800 at 24 MHz */
+	{ 0x0136, 0x1333 },
 	{ 0x0300, 0x0007 },
 	{ 0x0302, 0x0001 },
-	{ 0x0304, 0x0005 },	/* phone mode: 19.2/5 * 255 = 979.2 MHz */
+	{ 0x0304, 0x0005 },
 	{ 0x0306, 0x00ff },
 	{ 0x0308, 0x0008 },
 	{ 0x030a, 0x0001 },
 	{ 0x030c, 0x0000 },
-	{ 0x030e, 0x0003 },	/* phone mode: 19.2/3 * 94 = 601.6 MHz */
-	{ 0x0310, 0x005e },
-	{ 0x0312, 0x0002 },
-	{ 0x0340, 0x0a30 },
-	{ 0x0342, 0x1bf0 },
+	{ 0x030e, 0x0003 },
+	{ 0x0310, 0x0058 },
+	{ 0x0312, 0x0000 },
+	{ 0x6028, 0x2000 },
+	{ 0x602a, 0x16a6 },
+	{ 0x6f12, 0x006c },
+	{ 0x6028, 0x4000 },
+	{ 0x0340, 0x0bc0 },
+	{ 0x0342, 0x1800 },
 	{ 0x0202, 0x0100 },
 	{ 0x0200, 0x0100 },
 	{ 0x021e, 0x0000 },
 	{ 0x0d00, 0x0000 },
 	{ 0x0d02, 0x0001 },
-	{ 0x0804, 0x0200 },
-	{ 0x0810, 0x0020 },
-	/*
-	 * F0470: the MediaTek S5K3P9SP mode block does not write 0x0112 at all,
-	 * so on that programme the part's own default stands. This variant
-	 * leaves it alone too; the stream-on readback still reports whatever
-	 * the part answers. The phone's .pb writes 0x0a0a here (F0443).
-	 */
+	/* the vendor's group-held apply: 0x0104 = 0x0100 holds, 0x0104 = 0 releases */
+	{ 0x0104, 0x0100 },
+	{ 0x0340, 0x000d, 8 },
+	{ 0x0341, 0x00dc, 8 },
+	{ 0x0202, 0x000d, 8 },
+	{ 0x0203, 0x00d9, 8 },
+	{ 0x0204, 0x0002, 8 },
+	{ 0x0205, 0x0000, 8 },
+	{ 0x0000, 0x0001, 8 },
+	{ 0x0001, 0x0000, 8 },
+	{ 0x0104, 0x0000 },
 };
 
 static const s64 s5k3p9_link_freq_menu[] = {
@@ -1815,7 +1828,12 @@ static int s5k3p9_write_table(struct s5k3p9 *sensor,
 	int ret;
 
 	for (i = 0; i < n; i++) {
-		ret = regmap_write(sensor->regmap, regs[i].reg, regs[i].val);
+		if (regs[i].bytes == 8)
+			ret = regmap_write(sensor->regmap8, regs[i].reg,
+					   regs[i].val);
+		else
+			ret = regmap_write(sensor->regmap, regs[i].reg,
+					   regs[i].val);
 		if (ret)
 			return ret;
 	}
@@ -1946,8 +1964,8 @@ static int s5k3p9_s_stream(struct v4l2_subdev *sd, int enable)
 	int ret, i;
 
 	if (!enable) {
-		if (!regmap_write(sensor->regmap8, S5K3P9_REG_CTRL_MODE,
-				  S5K3P9_STREAM_OFF)) {
+		/* the vendor's stop: 16-bit 0x0100 = 0x0003 (standby, 0x0101 = 3) */
+		if (!regmap_write(sensor->regmap, S5K3P9_REG_CTRL_MODE, 0x0003)) {
 			/* the vendor's stop check: 0x0005 reads 0xFF */
 			for (i = 0; i < 40; i++) {
 				fsleep(5000);
@@ -1985,12 +2003,22 @@ static int s5k3p9_s_stream(struct v4l2_subdev *sd, int enable)
 	if (ret)
 		goto err_pm;
 
-	ret = regmap_write(sensor->regmap8, S5K3P9_REG_CTRL_MODE,
-			   S5K3P9_STREAM_ON);
+	/*
+	 * The vendor's stream-on is one 16-bit write 0x0100 = 0x0103, which puts
+	 * 0x01 in 0x0100 and 0x03 in 0x0101, followed by the 0x0101 byte again
+	 * (F0481). The second write is best-effort: stock's log shows it, and a
+	 * part that refuses writes in streaming mode must not fail the stream.
+	 */
+	ret = regmap_write(sensor->regmap, S5K3P9_REG_CTRL_MODE, 0x0103);
 	if (ret)
 		goto err_pm;
 
-	/* a few frame periods at 25.7 fps, so 0x0005 has advanced */
+	ret = regmap_write(sensor->regmap8, S5K3P9_REG_ORIENTATION, 0x03);
+	if (ret)
+		dev_warn(sensor->sd.dev, "stream on: 0x0101 write failed (%d)\n",
+			 ret);
+
+	/* a few frame periods at 30.3 fps, so 0x0005 has advanced */
 	msleep(100);
 	s5k3p9_stream_report(sensor, "stream on");
 
