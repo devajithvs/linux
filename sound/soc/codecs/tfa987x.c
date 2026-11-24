@@ -51,8 +51,15 @@
 #define TFA9874_ID		0x74
 
 #define TFA987X_RESET_PULSE_US	5000
-#define TFA987X_CLK_TRIES	50
-#define TFA987X_CLK_POLL_MS	10
+/*
+ * The vendor's start polls for the clock every 5 ms and re-queues the start
+ * when it is absent (tfa98xx_v6.c:4647-4695, "It may fail as we may not have
+ * a valid clock at that time, so re-schedule and re-try later"), up to
+ * TF98XX_MAX_DSP_START_TRY_COUNT.  Two seconds is that cap's order of
+ * magnitude and is reached only when the stream never starts.
+ */
+#define TFA987X_CLK_TRIES	400
+#define TFA987X_CLK_POLL_MS	5
 
 /* Bitfields: tfa9873_tfafieldnames.h. */
 #define BF_PWDN		0x0000	/* powerdown selection */
@@ -669,8 +676,11 @@ static void tfa987x_show_status(struct tfa987x_priv *priv, const char *when)
  * register file the container programs is the one the part exposes in
  * INIT_CF/INIT_FW, and the profile's DCDC and protection settings are
  * shadowed by the powerdown transition when they are written before it.
+ *
+ * The clock-independent half.  INIT_CF writes these before its own stability
+ * wait (tfa_dsp_v6.c:4240-4258).
  */
-static int tfa987x_configure(struct tfa987x_priv *priv)
+static int tfa987x_power_up(struct tfa987x_priv *priv)
 {
 	int ret;
 
@@ -693,20 +703,15 @@ static int tfa987x_configure(struct tfa987x_priv *priv)
 	if (ret)
 		return ret;
 
-	ret = tfa987x_bf_write(priv, BF_PWDN, 0);
-	if (ret)
-		return ret;
+	return tfa987x_bf_write(priv, BF_PWDN, 0);
+}
 
-	/*
-	 * The DSP may not be driving the interface yet: the bit clock is voted
-	 * in the CPU DAI's hw_params and the I2S endpoint starts with the
-	 * graph.  A timeout here is not fatal; tfa987x_unmute() waits again
-	 * with the stream running.
-	 */
-	if (tfa987x_wait_clks(priv))
-		dev_info(priv->dev, "no clock yet, waiting until the stream starts\n");
+/* INIT_HW/INIT_CF: the container's device list and profile, plus the two
+ * enables the container's lists leave clear. */
+static int tfa987x_apply_container(struct tfa987x_priv *priv)
+{
+	int ret;
 
-	/* INIT_HW/INIT_CF: the container's device list and profile. */
 	if (haptic_init) {
 		dev_info(priv->dev, "haptic_init: NXP's container-free sequence\n");
 		ret = tfa987x_write_haptic_regs(priv);
@@ -741,20 +746,39 @@ static int tfa987x_configure(struct tfa987x_priv *priv)
 	/*
 	 * TDME only enables the interface; the amplifier's input is sink 0, and
 	 * its enable (TDMSPKE, 0x23 bit 0, tfa9873_tfafieldnames.h:109) is a
-	 * separate bit that neither the container's lists nor this driver wrote.
-	 * The in-progress mainline TFA2 driver sets the same pair separately
-	 * (lkml 2608.0/01116): without it SWS/AMPS stay 0 while the clocks run.
+	 * separate bit that the container's lists leave clear.
 	 */
 	ret = tfa987x_bf_write(priv, BF_TDMSPKE, 1);
 	if (ret)
 		return ret;
 
-	priv->configured = true;
-	dev_info(priv->dev, "configured, profile %d (%s) at %u Hz\n",
+	dev_info(priv->dev, "container applied, profile %d (%s) at %u Hz\n",
 		 priv->profile, cnt_profile_name(priv, priv->profile),
 		 priv->rate);
 
 	return 0;
+}
+
+/*
+ * The start, run from tfa987x_unmute() with the stream already running: power
+ * the part up, wait for the clock that stream provides, then write the
+ * container.  The vendor starts from mute_stream's unmute for the same reason
+ * and retries while the clock is absent (tfa98xx_v6.c:4647-4695); before the
+ * stream exists the container's DCDC/protection words are shadowed.
+ */
+static int tfa987x_start(struct tfa987x_priv *priv)
+{
+	int ret;
+
+	ret = tfa987x_power_up(priv);
+	if (ret)
+		return ret;
+
+	ret = tfa987x_wait_clks(priv);
+	if (ret)
+		return ret;
+
+	return tfa987x_apply_container(priv);
 }
 
 static int tfa987x_unmute(struct tfa987x_priv *priv)
@@ -762,13 +786,12 @@ static int tfa987x_unmute(struct tfa987x_priv *priv)
 	unsigned int plls;
 	int ret;
 
-	ret = tfa987x_bf_write(priv, BF_PWDN, 0);
-	if (ret)
-		return ret;
-
-	ret = tfa987x_wait_clks(priv);
-	if (ret)
-		return ret;
+	if (!priv->configured) {
+		ret = tfa987x_start(priv);
+		if (ret)
+			return ret;
+		priv->configured = true;
+	}
 
 	/*
 	 * The alarm bits are sticky and clear when read; clear them before the
@@ -818,6 +841,12 @@ static int tfa987x_mute(struct tfa987x_priv *priv)
 	if (ret)
 		return ret;
 
+	/*
+	 * The vendor's stop takes the DSP down, and the next unmute starts it
+	 * again (tfa98xx_v6.c:5277-5287); the container is re-applied with the
+	 * next stream's clock.
+	 */
+	priv->configured = false;
 	priv->running = false;
 
 	return 0;
@@ -875,7 +904,7 @@ static int tfa987x_dai_hw_params(struct snd_pcm_substream *substream,
 {
 	struct tfa987x_priv *priv = snd_soc_component_get_drvdata(dai->component);
 	unsigned int rate = params_rate(params);
-	int ret, prof;
+	int prof;
 
 	dev_info(dai->dev, "hw_params: %u Hz, %u ch, %u-bit\n", rate,
 		 params_channels(params),
@@ -890,10 +919,19 @@ static int tfa987x_dai_hw_params(struct snd_pcm_substream *substream,
 	mutex_lock(&priv->lock);
 	priv->profile = prof;
 	priv->rate = rate;
-	ret = tfa987x_configure(priv);
+	/*
+	 * No register write here: the part has no clock until the DSP's I2S
+	 * endpoint starts, and the container's DCDC/protection words are
+	 * shadowed by powerdown when they are written before it.  The start
+	 * runs from the trigger, with the clock (tfa987x_start()).
+	 */
+	priv->configured = false;
 	mutex_unlock(&priv->lock);
 
-	return ret;
+	dev_info(dai->dev, "profile %d (%s) selected for %u Hz, start at unmute\n",
+		 prof, cnt_profile_name(priv, prof), rate);
+
+	return 0;
 }
 
 static int tfa987x_dai_trigger(struct snd_pcm_substream *substream, int cmd,
@@ -903,11 +941,6 @@ static int tfa987x_dai_trigger(struct snd_pcm_substream *substream, int cmd,
 	int ret = 0;
 
 	mutex_lock(&priv->lock);
-
-	if (!priv->configured) {
-		mutex_unlock(&priv->lock);
-		return 0;
-	}
 
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
