@@ -1218,7 +1218,7 @@
 		function = LED_FUNCTION_FLASH;
 		color = <LED_COLOR_ID_WHITE>;
 		function-enumerator = <0>;
-		led-sources = <1>, <2>;
+		led-sources = <1>, <4>;	/* F0474 test: stock switch0 pair, mask 0x09 */
 		led-max-microamp = <50000>;
 	};
 
@@ -1226,7 +1226,7 @@
 		function = LED_FUNCTION_FLASH;
 		color = <LED_COLOR_ID_WHITE>;
 		function-enumerator = <1>;
-		led-sources = <3>, <4>;
+		led-sources = <2>, <3>;	/* F0474 test: stock switch1 pair, mask 0x06 */
 		led-max-microamp = <50000>;
 	};
 };
