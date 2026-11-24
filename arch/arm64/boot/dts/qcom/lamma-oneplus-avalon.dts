@@ -1183,16 +1183,19 @@
 /*
  * The rear flash is the PMXR2230's flash-LED module, which the downstream
  * board leaves enabled (vendor/qcom/proprietary/devicetree/qcom/cliffs-mtp.dtsi:104-106)
- * and the stock camera overlays drive as two LEDs of two channels each: the
- * wide camera's flash is channels 1+2 and the ultrawide one's is 3+4
- * (vendor/qcom/proprietary/camera-devicetree/oplus/avalon_camera_overlay_common.dtsi:5-24).
- * Both of those overlays select the module's all-channel switch
- * (pmxr2230_switch2, mask 15), not the reference board's 1+4 and 2+3 pairs,
- * so the camera's pairs are the ones described here. Only the torch is
- * described — no flash-max-* properties, so the strobe path stays
- * unreachable — and each LED is limited to a tenth of the downstream torch
- * current of 500 mA per channel (qcom/pmxr2230.dtsi:167-201), which the
- * driver splits across the two channels.
+ * and the live stock FDT groups as two emitters: switch0 on channels 1+4
+ * (mask 0x09) and switch1 on 2+3 (0x06), both symmetry-enabled
+ * (build/stock-dump/camera/sys/firmware/fdt, the 2026-11-23 camera tarball).
+ * The stock camera overlays route both rear flash devices through switch2
+ * (mask 15) to gang all four (vendor/qcom/proprietary/camera-devicetree/oplus/
+ * avalon_camera_overlay_common.dtsi:5-24). Our first pairing, 1+2 and 3+4,
+ * lit nothing on either cdev (F0474); the stock masks light a LED each, so
+ * this node carries them: led-0 = 1+4 lights the bottom emitter and
+ * led-1 = 2+3 the top one, each at full brightness and fault-free (F0475).
+ * Only the torch is described — no flash-max-* properties, so the strobe
+ * path stays unreachable — and each LED is limited to a tenth of the
+ * downstream torch current of 500 mA per channel (qcom/pmxr2230.dtsi:167-201),
+ * which the driver splits across the two channels.
  */
 &pm7550_flash {
 	status = "okay";
@@ -1201,7 +1204,7 @@
 		function = LED_FUNCTION_FLASH;
 		color = <LED_COLOR_ID_WHITE>;
 		function-enumerator = <0>;
-		led-sources = <1>, <2>;
+		led-sources = <1>, <4>;	/* switch0 pair, bottom emitter (F0475) */
 		led-max-microamp = <50000>;
 	};
 
@@ -1209,7 +1212,7 @@
 		function = LED_FUNCTION_FLASH;
 		color = <LED_COLOR_ID_WHITE>;
 		function-enumerator = <1>;
-		led-sources = <3>, <4>;
+		led-sources = <2>, <3>;	/* switch1 pair, top emitter (F0475) */
 		led-max-microamp = <50000>;
 	};
 };
