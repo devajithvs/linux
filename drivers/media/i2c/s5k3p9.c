@@ -56,7 +56,14 @@ MODULE_PARM_DESC(reg_override, "writes after the mode block: addr=val[:b],... (b
 
 #define S5K3P9_MCLK_FREQ		(19200000UL)
 #define S5K3P9_DATA_LANES		4
-#define S5K3P9_LINK_FREQ		(600000000LL)	/* DT link-frequencies */
+/*
+ * F0481 rung (a): the stock front streams with PLL2 0x030E/0x0310 = 3/88, i.e.
+ * 563.2 Mbps/lane, and its CSIPHY4 is programmed from that rate. The board DT
+ * still declares 600 MHz, so the menu keeps that entry second and the control's
+ * default (index 0) is the stock rate: CAMSS reads the selection, not the DT.
+ */
+#define S5K3P9_LINK_FREQ		(563200000LL)	/* stock mode: 19.2/3*88 */
+#define S5K3P9_LINK_FREQ_DT		(600000000LL)	/* board DT link-frequencies */
 #define S5K3P9_PIXEL_RATE		(480000000LL)
 #define S5K3P9_WIDTH			2320
 #define S5K3P9_HEIGHT			1744
@@ -1738,6 +1745,7 @@ static const struct s5k3p9_reg s5k3p9_mode_regs[] = {
 
 static const s64 s5k3p9_link_freq_menu[] = {
 	S5K3P9_LINK_FREQ,
+	S5K3P9_LINK_FREQ_DT,
 };
 
 static const struct regmap_config s5k3p9_regmap_config = {
@@ -2091,8 +2099,9 @@ static int s5k3p9_get_hwcfg(struct s5k3p9 *sensor)
 
 	ret = v4l2_link_freq_to_bitmap(dev, ep.link_frequencies,
 				       ep.nr_of_link_frequencies,
-				       (const s64[]){ S5K3P9_LINK_FREQ },
-				       1, &sensor->link_freq_bitmap);
+				       (const s64[]){ S5K3P9_LINK_FREQ,
+						      S5K3P9_LINK_FREQ_DT },
+				       2, &sensor->link_freq_bitmap);
 out:
 	v4l2_fwnode_endpoint_free(&ep);
 	fwnode_handle_put(fwnode);
