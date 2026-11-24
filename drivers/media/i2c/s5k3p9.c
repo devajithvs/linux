@@ -25,10 +25,12 @@
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
+#include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
+#include <linux/string.h>
 
 #include <media/media-entity.h>
 #include <media/v4l2-cci.h>
@@ -36,6 +38,21 @@
 #include <media/v4l2-device.h>
 #include <media/v4l2-fwnode.h>
 #include <media/v4l2-subdev.h>
+
+/*
+ * F0472 experiment knobs, applied at run time so a single module build can try
+ * several programmes. init_set=mtk writes the same init table the driver always
+ * writes (the S5K3P9SP uTnpArrayInit is byte-identical to s5k3p9_init_regs) but
+ * skips the FTM preamble and its 3 ms settle. reg_override appends writes after
+ * the mode block and before stream-on.
+ */
+static char *init_set = "ftm";
+module_param(init_set, charp, 0644);
+MODULE_PARM_DESC(init_set, "init block: ftm (preamble + init) or mtk (init only)");
+
+static char *reg_override;
+module_param(reg_override, charp, 0644);
+MODULE_PARM_DESC(reg_override, "writes after the mode block: addr=val[:b],... (b = 8-bit)");
 
 #define S5K3P9_MCLK_FREQ		(19200000UL)
 #define S5K3P9_DATA_LANES		4
@@ -1797,6 +1814,57 @@ static int s5k3p9_write_table(struct s5k3p9 *sensor,
 	return 0;
 }
 
+/* addr=val or addr=val:b, comma-separated; ":b" selects the 8-bit regmap */
+static int s5k3p9_apply_overrides(struct s5k3p9 *sensor)
+{
+	struct device *dev = sensor->sd.dev;
+	const char *p = reg_override;
+	int n = 0;
+
+	if (!p || !*p)
+		return 0;
+
+	while (*p) {
+		unsigned long addr, val;
+		bool byte = false;
+		int used = 0, ret;
+
+		if (sscanf(p, "%lx=%lx%n", &addr, &val, &used) != 2 || !used) {
+			dev_err(dev, "override: cannot parse '%s'\n", p);
+			return -EINVAL;
+		}
+		p += used;
+		if (*p == ':') {
+			p++;
+			if (*p == 'b' || *p == 'B')
+				byte = true;
+			else if (*p != 'w' && *p != 'W')
+				return -EINVAL;
+			p++;
+		}
+		if (*p == ',')
+			p++;
+		else if (*p) {
+			dev_err(dev, "override: trailing '%s'\n", p);
+			return -EINVAL;
+		}
+
+		ret = byte ? regmap_write(sensor->regmap8, addr, val)
+			   : regmap_write(sensor->regmap, addr, val);
+		if (ret) {
+			dev_err(dev, "override %04lx=%04lx failed (%d)\n",
+				addr, val, ret);
+			return ret;
+		}
+		dev_info(dev, "override %04lx=%04lx (%s)\n",
+			 addr, val, byte ? "8-bit" : "16-bit");
+		n++;
+	}
+
+	dev_info(dev, "override: %d write(s) applied\n", n);
+	return 0;
+}
+
 static int s5k3p9_power_on(struct s5k3p9 *sensor)
 {
 	int ret;
@@ -1902,6 +1970,10 @@ static int s5k3p9_s_stream(struct v4l2_subdev *sd, int enable)
 
 	ret = s5k3p9_write_table(sensor, sensor->mode->regs,
 				 sensor->mode->num_regs);
+	if (ret)
+		goto err_pm;
+
+	ret = s5k3p9_apply_overrides(sensor);
 	if (ret)
 		goto err_pm;
 
@@ -2067,13 +2139,22 @@ static int s5k3p9_runtime_resume(struct device *dev)
 	if (ret)
 		return ret;
 
-	ret = s5k3p9_write_table(sensor, s5k3p9_power_on_regs,
-				 ARRAY_SIZE(s5k3p9_power_on_regs));
-	if (ret)
-		goto err_power;
+	if (!strcmp(init_set, "mtk")) {
+		dev_info(dev, "init_set=mtk: init table, no FTM preamble\n");
+	} else if (!strcmp(init_set, "ftm")) {
+		ret = s5k3p9_write_table(sensor, s5k3p9_power_on_regs,
+					 ARRAY_SIZE(s5k3p9_power_on_regs));
+		if (ret)
+			goto err_power;
 
-	/* the vendor table's one nonzero delay: 3,000 us after 0x6010 */
-	fsleep(3000);
+		/* the vendor table's one nonzero delay: 3,000 us after 0x6010 */
+		fsleep(3000);
+		dev_info(dev, "init_set=ftm: preamble + init table\n");
+	} else {
+		dev_err(dev, "init_set=%s: expected ftm or mtk\n", init_set);
+		ret = -EINVAL;
+		goto err_power;
+	}
 
 	ret = s5k3p9_write_table(sensor, s5k3p9_init_regs,
 				 ARRAY_SIZE(s5k3p9_init_regs));
