@@ -1712,13 +1712,11 @@ static const struct s5k3p9_reg s5k3p9_mode_regs[] = {
 	{ 0x0804, 0x0200 },
 	{ 0x0810, 0x0020 },
 	/*
-	 * F0443: the phone's own mode programme (vendor/lib64/camera/s5k3p9_*.pb,
-	 * mode field 19) ends with this write, immediately before 0x0100 = 1:
-	 * the CSI-2 output format latch. Without it CSID1's RDI0, armed for
-	 * RAW10 (0x2B) on VC0, has no matching packet and captures 0 bytes with
-	 * no error (all CSI2 RX error IRQs are masked in camss-csid-gen3.c).
+	 * F0470: the MediaTek S5K3P9SP mode block does not write 0x0112 at all,
+	 * so on that programme the part's own default stands. This variant
+	 * leaves it alone too; the stream-on readback still reports whatever
+	 * the part answers. The phone's .pb writes 0x0a0a here (F0443).
 	 */
-	{ 0x0112, 0x0a0a },
 };
 
 static const s64 s5k3p9_link_freq_menu[] = {
