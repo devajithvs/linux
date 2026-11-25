@@ -78,17 +78,35 @@ static int sc8280xp_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	struct snd_mask *fmt = hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
 
 	rate->min = rate->max = 48000;
-	snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
 	channels->min = 2;
 	channels->max = 2;
 	switch (cpu_dai->id) {
+	case SECONDARY_MI2S_RX:
+		/*
+		 * The TFA9873 pair on the secondary MI2S takes its format from
+		 * NXP's container, and this board's copy programs 32-bit slots
+		 * in a two-slot frame (TDMSSIZE/TDMSLLN 31, TDMSLOTS 1,
+		 * AUDFS 8 = 48 kHz): a 2-channel 32-bit I2S frame is exactly
+		 * that, and the MI2S bit clock follows it (q6apm-lpass-dais.c
+		 * votes rate * channels * 32 for widths above 16).
+		 */
+		snd_mask_none(fmt);
+		snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S32_LE);
+		break;
 	case TX_CODEC_DMA_TX_0:
 	case TX_CODEC_DMA_TX_1:
 	case TX_CODEC_DMA_TX_2:
 	case TX_CODEC_DMA_TX_3:
 		channels->min = 1;
-		break;
+		fallthrough;
 	default:
+		/*
+		 * snd_mask_set_format() sets a bit and leaves the rest, and
+		 * params_format() reports the lowest set bit: the default has
+		 * to replace the set, not join it.
+		 */
+		snd_mask_none(fmt);
+		snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
 		break;
 	}
 

@@ -226,6 +226,31 @@
 		};
 
 		/*
+		 * Capture: the WCD9370's ADCs leave the codec on the TX
+		 * SoundWire slave (swr2, the TX macro's master) and reach the
+		 * LPASS through the RXTX codec DMA's TX3 port.  The same link
+		 * shape as qcm6490-idp.dts's wcd-capture-dai-link, whose codec
+		 * is this one; the codec's first DAI is the RX, the second the
+		 * TX (wcd937x.c's wcd937x_dais[]).
+		 */
+		wcd-capture-dai-link {
+			link-name = "WCD Capture";
+
+			cpu {
+				sound-dai = <&q6apmbedai TX_CODEC_DMA_TX_3>;
+			};
+
+			codec {
+				sound-dai = <&wcd937x 1>, <&swr2 1>,
+					    <&lpass_txmacro 0>;
+			};
+
+			platform {
+				sound-dai = <&q6apm>;
+			};
+		};
+
+		/*
 		 * Both amplifiers are fed from the same MI2S: downstream's
 		 * oplus,speaker-i2s-id = <1> is the secondary MI2S, whose
 		 * SCK/WS/SD0/SD1 are the TLMM i2s1 states above
@@ -247,6 +272,19 @@
 			};
 		};
 	};
+};
+
+/*
+ * The secondary MI2S bit clock is owned by the LPASS PRM, not by the DSP's
+ * I2S endpoint: the DAI votes its frequency through q6prm at hw_params, as
+ * the vendor's machine driver does (audio-kernel asoc/msm_common.c, the
+ * CLOCK_ID_SEC_MI2S_IBIT branch of msm_common_snd_hw_params()).  Without the
+ * vote the endpoint has no bit clock, so it never returns a buffer and the
+ * playback hw_ptr stays 0.
+ */
+&q6apmbedai {
+	clocks = <&q6prmcc LPASS_CLK_ID_SEC_MI2S_IBIT LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
+	clock-names = "sec-mi2s-ibit";
 };
 
 &apps_rsc {
@@ -1417,12 +1455,11 @@
 		 * qcom.c treats as "do not program" (SWR_INVALID_PARAM),
 		 * so their lane-control register is never written.
 		 *
-		 * The word length is the codec ADC's 24-bit word
-		 * (0x17 = bps - 1) on the same three ports: four slots of
-		 * 24 bits are the 100-bit frame of the 4.8 MHz bus. Without
-		 * the property qcom.c skips sdw_fill_port_params() and
-		 * writes 0xff into DPN_BlockCtrl1 on the codec and on the
-		 * master.
+		 * There is no qcom,ports-word-length here: the downstream
+		 * TX master leaves DPN_BlockCtrl1 (WDLEN) at its reset
+		 * value and programs a word length only for the RX/WSA
+		 * port tables, so this node must not write 0x17 on either
+		 * half of the bus.
 		 */
 		qcom,ports-sinterval-low = /bits/ 8 <
 			0x00 0x03 0x03 0x03 0xff>;
@@ -1432,8 +1469,6 @@
 			0x00 0x00 0x00 0x00 0x00>;
 		qcom,ports-block-pack-mode = /bits/ 8 <
 			0xff 0xff 0xff 0xff 0xff>;
-		qcom,ports-word-length = /bits/ 8 <
-			0xff 0x17 0x17 0x17 0xff>;
 		qcom,ports-lane-control = /bits/ 8 <
 			0xff 0x00 0x01 0x00 0xff>;
 

@@ -1,43 +1,189 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * NXP TFA987x speaker amplifier.
+ * NXP TFA9873/TFA9874 speaker amplifier, brought up from NXP's own
+ * configuration container.
  *
- * The TFA9873/TFA9874 have no mainline driver; the phone's vendor stack builds
- * NXP's tfa98xx v6 driver as an out-of-tree module. This driver covers the
- * part of that module this board needs to bring the amplifier up and identify
- * it: reset, the revision register and an ASoC playback DAI, so the machine
- * driver can link the amplifier into the sound card.  The revision register's
- * low byte names the part: 0x73 is a TFA9873 and 0x74 a TFA9874
- * (tfa98xx_v6.c:6084-6108).
+ * The part is a "probus" device: no internal DSP, so everything the vendor's
+ * tfa98xx module would load into a DSP (the patch, the algorithm parameters,
+ * the volume table) is either absent from the phone's own build or is a
+ * register list inside the container file.  The phone's stock
+ * oplus_audio_tfa98xx_v6.ko proves it: its tfa98xx_write_dsp() frees the
+ * message and returns 0, and its tfa98xx_read_dsp() is `mov w0, wzr; ret`.
+ * What is left is what this driver does: read /lib/firmware/tfa98xx.cnt,
+ * find this amplifier's device list by its I2C address, and write that list
+ * and the selected profile's register/bitfield items over I2C, then take the
+ * device out of powerdown.
  *
- * The vendor driver cannot play without the DSP container file
- * (tfa98xx.cnt): its ASoC startup refuses while the container has not
- * loaded, and the cold start walks the container's device list. The
- * container itself is a binary this driver does not carry and the board's
- * copy lives on the phone's odm firmware; until it is loaded and the vendor
- * DSP HAL is ported, the DAI reports -EOPNOTSUPP instead of producing
- * silence that looks like success.
+ * The container is the authority on the digital interface.  Its device list
+ * for this board (OPPO / TFA / 9873N1B, 5,822 B, ODM's
+ * /odm/firmware/tfa98xx.cnt) programs TDM: TDMNBCK 2, TDMSLOTS 1 (two slots
+ * per frame), TDMSLLN 31 and TDMSSIZE 31 (32-bit slots), AUDFS 8 (48 kHz),
+ * with 0x34 taking slot 0 and 0x35 slot 1.  Two 32-bit slots at 48 kHz is
+ * exactly what a 2-channel, 32-bit I2S frame is, so the card's speaker link
+ * runs S32_LE (sound/soc/qcom/sc8280xp.c's BE fixup) and this driver only
+ * checks that the stream's rate has a profile.
  *
  * Register access is 8-bit address, 16-bit big-endian value, as the vendor
- * driver configures it (tfa98xx_v6.c:5503-5512).
+ * driver configures it (tfa98xx_v6.c:5503-5512).  Bitfields are the
+ * datasheet's (reg << 8 | pos << 4 | (len - 1)), taken from
+ * tfa9873_tfafieldnames.h.
  */
 
+#include <linux/crc32.h>
+#include <linux/debugfs.h>
+#include <linux/delay.h>
+#include <linux/firmware.h>
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
+#include <linux/unaligned.h>
+#include <linux/string.h>
+#include <sound/pcm_params.h>
 #include <sound/soc.h>
 
+#define TFA987X_REG_STATUS1	0x10
+#define TFA987X_REG_STATUS2	0x11
 #define TFA987X_REG_REVISION	0x03
 #define TFA9873_ID		0x73
 #define TFA9874_ID		0x74
 
 #define TFA987X_RESET_PULSE_US	5000
+/*
+ * The vendor's start polls for the clock every 5 ms and re-queues the start
+ * when it is absent (tfa98xx_v6.c:4647-4695, "It may fail as we may not have
+ * a valid clock at that time, so re-schedule and re-try later"), up to
+ * TF98XX_MAX_DSP_START_TRY_COUNT.  Two seconds is that cap's order of
+ * magnitude and is reached only when the stream never starts.
+ */
+#define TFA987X_CLK_TRIES	400
+#define TFA987X_CLK_POLL_MS	5
 
+/* Bitfields: tfa9873_tfafieldnames.h. */
+#define BF_PWDN		0x0000	/* powerdown selection */
+#define BF_I2CR		0x0010	/* I2C reset, auto clear */
+#define BF_AMPE		0x0030	/* activate amplifier */
+#define BF_DCA		0x0040	/* activate DC-to-DC converter */
+#define BF_MANSCONF	0x0120	/* I2C configured: leave wait4srcsettings */
+#define BF_AUDFS	0x0203	/* sample rate (fs) */
+#define BF_OTDS		0x1020	/* OTP alarm (sticky) */
+#define BF_OCDS		0x1030	/* OCP amplifier (sticky) */
+#define BF_UVDS		0x1040	/* UVP alarm (sticky) */
+#define BF_MANALARM	0x1050	/* alarm state */
+#define BF_CLKS		0x1060	/* clocks stable */
+#define BF_NOCLK	0x1080	/* lost clock (sticky) */
+#define BF_TDMERR	0x10a0	/* TDM error */
+#define BF_DCIL		0x1100	/* DCDC current limiting */
+#define BF_DCDCA	0x1110	/* DCDC active */
+#define BF_PLLS		0x1160	/* PLL lock */
+#define BF_TDMLUTER	0x1180	/* TDM LUT error */
+#define BF_SWS		0x11d0	/* amplifier engage */
+#define BF_AMPS		0x11e0	/* amplifier enable */
+#define BF_AREFS	0x11f0	/* references enable */
+#define BF_FSSYNCEN	0x0480	/* FS synchronisation of the clock divider */
+#define BF_TDMNBCK	0x20c3	/* bit clocks per frame */
+#define BF_TDMSLOTS	0x2013	/* slots per frame */
+#define BF_TDMSLLN	0x2144	/* bits per slot */
+#define BF_TDMSSIZE	0x2224	/* sample bits per slot */
+#define BF_TDME		0x2000	/* enable the digital interface */
+#define BF_TDMSPKE	0x2300	/* enable audio sink 0 (the amplifier's input) */
+#define BF_TDMVSS	0x2703	/* slot of the voltage sense */
+#define BF_TDMCSS	0x26c3	/* slot of the current sense */
+#define BF_TDMVSE	0x2340	/* put the voltage sense in a TDM slot */
+#define BF_TDMCSE	0x2330	/* put the current sense in a TDM slot */
+#define BF_TDMSRCMAP	0x6802	/* I/V source map */
+#define BF_TDMSRCAS	0x6831
+#define BF_TDMSRCBS	0x6852
+#define BF_DCTRIP	0x7443
+#define BF_DCTRIPT	0x7584
+#define BF_LNMODE	0x62e1
+#define BF_MUTETO	0x0160
+
+static bool haptic_init;
+module_param(haptic_init, bool, 0444);
+MODULE_PARM_DESC(haptic_init,
+		 "write NXP's DSP-less haptic bring-up instead of the container's device list (diagnostic)");
+
+#define BF_MTPK		0xa107	/* MTP KEY2 register */
+
+#define BF_REG(f)	((f) >> 8)
+#define BF_POS(f)	(((f) >> 4) & 0xf)
+#define BF_LEN(f)	(((f) & 0xf) + 1)
+
+/* Descriptor types: nxpTfaDescriptorType_t, tfa98xx_parameters.h:581-598. */
+#define DSC_DEVICE	0
+#define DSC_PROFILE	1
+#define DSC_REGISTER	2
+#define DSC_STRING	3
+#define DSC_FILE	4
+#define DSC_PATCH	5
+#define DSC_MARKER	6
+#define DSC_BITFIELD	16
+#define DSC_DEFAULT	17
+#define DSC_NO_INIT	24
+
+#define TFA_CNT_HDR_LEN		46	/* through nliveData; index[] follows */
+#define TFA_CNT_CRCOFF		0x0a
+
+static int rate_to_audfs(unsigned int rate)
+{
+	switch (rate) {
+	case 8000:	return 0;
+	case 11025:	return 1;
+	case 12000:	return 2;
+	case 16000:	return 3;
+	case 22050:	return 4;
+	case 24000:	return 5;
+	case 32000:	return 6;
+	case 44100:	return 7;
+	case 48000:	return 8;
+	case 96000:	return 9;
+	default:	return -EINVAL;
+	}
+}
+
+/* the part's own optimal settings, tfa_init_v6.c:tfa9873_specific() */
+static const struct {
+	u8 reg;
+	u16 val;
+} tfa987x_init_0b73[] = {
+	{ 0x02, 0x0628 },	/* AUDFS 8 (48 kHz), FRACTDEL 0x31 */
+	{ 0x61, 0x0183 },
+	{ 0x63, 0x005a },
+	{ 0x6f, 0x0082 },
+	{ 0x70, 0xa3eb },
+	{ 0x73, 0x0187 },
+	{ 0x83, 0x071c },
+	{ 0x85, 0x0380 },
+	{ 0xd5, 0x004d },
+};
+
+/**
+ * struct tfa987x_priv - one amplifier
+ * @dev: this amplifier's device
+ * @regmap: the I2C register map
+ * @fw: the container as handed over by the firmware loader
+ * @addr: I2C address, the key into the container's device lists
+ * @dev_off: offset of this amplifier's device list inside the container
+ * @lock: serialises the register sequences against the DAI callbacks
+ * @profile: index of the selected profile within the device list
+ * @configured: the device list and the profile have been written
+ * @rate: the stream's rate, for the log and the profile match
+ */
 struct tfa987x_priv {
 	struct device *dev;
 	struct regmap *regmap;
+	const struct firmware *fw;
+	unsigned int addr;
+	size_t dev_off;
+	struct mutex lock;
+	unsigned int rev;
+	int profile;
+	bool configured;
+	bool running;
+	unsigned int rate;
 };
 
 static const struct regmap_config tfa987x_regmap_config = {
@@ -48,36 +194,796 @@ static const struct regmap_config tfa987x_regmap_config = {
 	.cache_type = REGCACHE_NONE,
 };
 
-/*
- * The vendor driver pulses the reset line high for 5 ms and then low for
- * 5 ms (tfa98xx_v6.c:5539-5546, :6060) with the line described as active
- * high (avalon-24211-audio-cliffs-overlay.dtsi:80-102, flag 0), so the DT
- * uses GPIO_ACTIVE_HIGH.
- */
-static int tfa987x_reset(struct device *dev, struct gpio_desc *reset)
+/* --- container access, all bounds-checked against the firmware blob ------- */
+
+static bool cnt_has(struct tfa987x_priv *priv, size_t off, size_t size)
 {
-	gpiod_set_value_cansleep(reset, 1);
-	usleep_range(TFA987X_RESET_PULSE_US, TFA987X_RESET_PULSE_US + 1000);
-	gpiod_set_value_cansleep(reset, 0);
-	usleep_range(TFA987X_RESET_PULSE_US, TFA987X_RESET_PULSE_US + 1000);
+	return off <= priv->fw->size && size <= priv->fw->size - off;
+}
+
+static int cnt_desc(struct tfa987x_priv *priv, size_t off, size_t *doff,
+		    u8 *type)
+{
+	u32 v;
+
+	if (!cnt_has(priv, off, 4))
+		return -EINVAL;
+
+	v = get_unaligned_le32(priv->fw->data + off);
+	*doff = v & 0xffffff;
+	*type = v >> 24;
+	if (*doff >= priv->fw->size)
+		return -EINVAL;
 
 	return 0;
+}
+
+static const char *cnt_string(struct tfa987x_priv *priv, size_t off)
+{
+	const char *s = (const char *)priv->fw->data + off;
+	size_t max = priv->fw->size - off;
+
+	return strnlen(s, max) == max ? NULL : s;
+}
+
+/* the device list whose I2C address is this amplifier's */
+static int cnt_find_dev(struct tfa987x_priv *priv)
+{
+	u16 ndev;
+	int i;
+
+	if (priv->fw->size < TFA_CNT_HDR_LEN)
+		return -EINVAL;
+
+	ndev = get_unaligned_le16(priv->fw->data + 0x28);
+
+	for (i = 0; i < ndev; i++) {
+		size_t off;
+		u8 type;
+		u8 addr;
+
+		if (cnt_desc(priv, TFA_CNT_HDR_LEN + 4 * i, &off, &type))
+			return -EINVAL;
+		if (type != DSC_DEVICE)
+			continue;
+		if (!cnt_has(priv, off, 12))
+			return -EINVAL;
+		addr = priv->fw->data[off + 2];
+		if (addr != priv->addr)
+			continue;
+		priv->dev_off = off;
+		dev_info(priv->dev, "container: device list %d for 0x%02x\n",
+			 i, addr);
+		return 0;
+	}
+
+	return -ENOENT;
+}
+
+/* the Nth profile of this amplifier's device list (a dscProfile item) */
+static int cnt_profile_off(struct tfa987x_priv *priv, int idx, size_t *poff)
+{
+	const u8 *buf = priv->fw->data;
+	size_t off = priv->dev_off;
+	int i, hit = 0;
+
+	u8 len = buf[off];
+
+	for (i = 0; i < len; i++) {
+		size_t doff;
+		u8 type;
+
+		if (cnt_desc(priv, off + 12 + 4 * i, &doff, &type))
+			return -EINVAL;
+		if (type != DSC_PROFILE)
+			continue;
+		if (hit++ == idx) {
+			*poff = doff;
+			return 0;
+		}
+	}
+
+	return -ENOENT;
+}
+
+static int cnt_nprofiles(struct tfa987x_priv *priv)
+{
+	const u8 *buf = priv->fw->data;
+	size_t off = priv->dev_off;
+	int i, n = 0;
+
+	for (i = 0; i < buf[off]; i++) {
+		size_t doff;
+		u8 type;
+
+		if (cnt_desc(priv, off + 12 + 4 * i, &doff, &type))
+			break;
+		if (type == DSC_PROFILE)
+			n++;
+	}
+
+	return n;
+}
+
+static const char *cnt_profile_name(struct tfa987x_priv *priv, int idx)
+{
+	size_t poff, noff;
+	u8 type;
+
+	if (cnt_profile_off(priv, idx, &poff) ||
+	    cnt_desc(priv, poff + 4, &noff, &type) || type != DSC_STRING)
+		return NULL;
+
+	return cnt_string(priv, noff);
+}
+
+/* the AUDFS field of a profile, or 0 when the profile does not set one */
+static unsigned int cnt_profile_audfs(struct tfa987x_priv *priv, int idx)
+{
+	size_t poff;
+	u8 n, i;
+
+	if (cnt_profile_off(priv, idx, &poff))
+		return 0;
+
+	n = priv->fw->data[poff] - 1;
+	for (i = 0; i < n; i++) {
+		size_t doff;
+		u8 type;
+
+		if (cnt_desc(priv, poff + 8 + 4 * i, &doff, &type))
+			return 0;
+		if (type != DSC_BITFIELD || !cnt_has(priv, doff, 4))
+			continue;
+		if (get_unaligned_le16(priv->fw->data + doff + 2) == BF_AUDFS)
+			return get_unaligned_le16(priv->fw->data + doff);
+	}
+
+	return 0;
+}
+
+static int tfa987x_cnt_load(struct tfa987x_priv *priv)
+{
+	const u8 *buf = priv->fw->data;
+	size_t len = priv->fw->size;
+	u32 size, crc, crc_calc;
+	u16 subversion;
+
+	if (len < TFA_CNT_HDR_LEN) {
+		dev_err(priv->dev, "container: too short (%zu B)\n", len);
+		return -EINVAL;
+	}
+
+	if (buf[0] != 'P' || buf[1] != 'M' || buf[2] != '3' || buf[3] != '_') {
+		dev_err(priv->dev, "container: not a PM3 container\n");
+		return -EINVAL;
+	}
+
+	size = get_unaligned_le32(buf + 0x06);
+	crc = get_unaligned_le32(buf + TFA_CNT_CRCOFF);
+	if (size != len) {
+		dev_err(priv->dev, "container: size %u, file %zu\n", size, len);
+		return -EINVAL;
+	}
+
+	crc_calc = ~crc32_le(~0u, buf + TFA_CNT_CRCOFF + 4,
+			     len - TFA_CNT_CRCOFF - 4);
+	if (crc_calc != crc) {
+		dev_err(priv->dev, "container: CRC 0x%08x, computed 0x%08x\n",
+			crc, crc_calc);
+		return -EINVAL;
+	}
+
+	subversion = get_unaligned_le16(buf + 0x04);
+	if ((u8)(subversion >> 8) != '1' && (u8)subversion != '0') {
+		dev_err(priv->dev, "container: unsupported subversion\n");
+		return -EINVAL;
+	}
+
+	dev_info(priv->dev,
+		 "container: %.8s %.8s %.8s v%c%c%c, %zu B, CRC ok\n",
+		 buf + 0x10, buf + 0x18, buf + 0x20,
+		 buf[2], buf[3], buf[4], len);
+
+	return cnt_find_dev(priv);
+}
+
+/* --- register and bitfield writers --------------------------------------- */
+
+static int tfa987x_bf_write(struct tfa987x_priv *priv, u16 field, u16 value)
+{
+	unsigned int reg = BF_REG(field);
+	unsigned int mask = ((1u << BF_LEN(field)) - 1) << BF_POS(field);
+	unsigned int old, new;
+	int ret;
+
+	ret = regmap_read(priv->regmap, reg, &old);
+	if (ret)
+		return ret;
+
+	new = (old & ~mask) | ((value << BF_POS(field)) & mask);
+	if (new == old)
+		return 0;
+
+	return regmap_write(priv->regmap, reg, new);
+}
+
+static int tfa987x_bf_read(struct tfa987x_priv *priv, u16 field,
+			   unsigned int *value)
+{
+	unsigned int mask = ((1u << BF_LEN(field)) - 1) << BF_POS(field);
+	unsigned int reg;
+	int ret;
+
+	ret = regmap_read(priv->regmap, BF_REG(field), &reg);
+	if (ret)
+		return ret;
+
+	*value = (reg & mask) >> BF_POS(field);
+
+	return 0;
+}
+
+static int tfa987x_reg_write_masked(struct tfa987x_priv *priv, size_t off)
+{
+	const u8 *p = priv->fw->data + off;
+	u8 addr = p[0];
+	u16 value = get_unaligned_le16(p + 1);
+	u16 mask = get_unaligned_le16(p + 3);
+	unsigned int old;
+	int ret;
+
+	ret = regmap_read(priv->regmap, addr, &old);
+	if (ret)
+		return ret;
+
+	old &= ~mask;
+	old |= value & mask;
+
+	return regmap_write(priv->regmap, addr, old);
+}
+
+/*
+ * Write the register and bitfield items of a descriptor list.  @stop_default
+ * ends at the profile's default section, which is the cold-boot half of the
+ * list and not part of a profile switch (tfaContWriteRegsProf_v6,
+ * tfa_container_v6.c:1140).  A patch, file or profile item ends a device
+ * list (tfaContWriteRegsDev_v6_v6, :1108).
+ */
+static int tfa987x_write_list(struct tfa987x_priv *priv, size_t off, u8 len,
+			      bool stop_default)
+{
+	int i;
+
+	for (i = 0; i < len; i++) {
+		size_t doff;
+		u8 type;
+		int ret;
+
+		ret = cnt_desc(priv, off + 4 * i, &doff, &type);
+		if (ret)
+			return ret;
+
+		switch (type) {
+		case DSC_BITFIELD:
+			if (!cnt_has(priv, doff, 4))
+				return -EINVAL;
+			ret = tfa987x_bf_write(priv,
+					       get_unaligned_le16(priv->fw->data + doff + 2),
+					       get_unaligned_le16(priv->fw->data + doff));
+			break;
+		case DSC_REGISTER:
+			if (!cnt_has(priv, doff, 5))
+				return -EINVAL;
+			ret = tfa987x_reg_write_masked(priv, doff);
+			break;
+		case DSC_DEFAULT:
+			if (stop_default)
+				return 0;
+			continue;
+		case DSC_PATCH:
+		case DSC_FILE:
+		case DSC_PROFILE:
+			if (!stop_default)
+				return 0;
+			continue;
+		default:
+			continue;
+		}
+
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
+/*
+ * The keys guard the MTP and the analog trim registers; NXP's own init unlocks
+ * them, writes the part's revision-specific table and locks them again
+ * (tfa_init_v6.c:tfa9873_specific(), tfa98xx_key2_v6()).  Without the table the
+ * amplifier keeps its POR analog and DCDC settings.
+ */
+static int tfa987x_init_part(struct tfa987x_priv *priv)
+{
+	unsigned int value;
+	int i, ret;
+
+	ret = regmap_write(priv->regmap, 0x0f, 0x5a6b);
+	if (ret)
+		return ret;
+	ret = regmap_read(priv->regmap, 0xfb, &value);
+	if (ret)
+		return ret;
+	ret = regmap_write(priv->regmap, 0xa0, value ^ 0x005a);
+	if (ret)
+		return ret;
+	ret = tfa987x_bf_write(priv, BF_MTPK, 0x5a);
+	if (ret)
+		return ret;
+	ret = regmap_write(priv->regmap, 0x0f, 0);
+	if (ret)
+		return ret;
+
+	if (priv->rev != 0x0b73) {
+		dev_warn(priv->dev, "no optimal settings for rev 0x%04x\n",
+			 priv->rev);
+	} else {
+		for (i = 0; i < ARRAY_SIZE(tfa987x_init_0b73); i++) {
+			ret = regmap_write(priv->regmap, tfa987x_init_0b73[i].reg,
+					   tfa987x_init_0b73[i].val);
+			if (ret)
+				return ret;
+		}
+	}
+
+	return tfa987x_bf_write(priv, BF_FSSYNCEN, 0);
+}
+
+/*
+ * NXP's own container-free sequence for this part (tfa_haptic.c:193-215): the
+ * one the vendor's haptic driver runs on this phone family.  Diagnostic only:
+ * it selects a bring-up path, and if the amplifier engages with it and not
+ * with the container's list, the difference is in the list, not the hardware.
+ */
+static int tfa987x_write_haptic_regs(struct tfa987x_priv *priv)
+{
+	static const struct {
+		u16 field;
+		u16 val;
+	} seq[] = {
+		{ BF_AUDFS, 8 }, { BF_TDME, 1 }, { BF_TDMNBCK, 2 },
+		{ BF_TDMSLOTS, 1 }, { BF_TDMSLLN, 31 }, { BF_TDMSSIZE, 15 },
+		{ BF_TDMSRCMAP, 2 }, { BF_TDMVSS, 0 }, { BF_TDMCSS, 1 },
+		{ BF_TDMVSE, 1 }, { BF_TDMCSE, 1 }, { BF_TDMSRCAS, 1 },
+		{ BF_TDMSRCBS, 2 }, { BF_DCA, 1 }, { BF_FSSYNCEN, 0 },
+		{ BF_DCTRIP, 11 }, { BF_DCTRIPT, 16 }, { BF_LNMODE, 1 },
+		{ BF_MUTETO, 1 }, { BF_MANSCONF, 1 },
+	};
+	int i, ret;
+
+	for (i = 0; i < ARRAY_SIZE(seq); i++) {
+		ret = tfa987x_bf_write(priv, seq[i].field, seq[i].val);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
+static int tfa987x_write_dev_regs(struct tfa987x_priv *priv)
+{
+	const u8 *buf = priv->fw->data;
+	u8 len = buf[priv->dev_off];
+
+	/* length(1) bus(1) dev(1) func(1) devid(4) name(4), then the items */
+	return tfa987x_write_list(priv, priv->dev_off + 12, len, false);
+}
+
+static int tfa987x_write_profile(struct tfa987x_priv *priv, int idx)
+{
+	size_t poff;
+	u8 len;
+
+	if (cnt_profile_off(priv, idx, &poff))
+		return -ENOENT;
+
+	len = priv->fw->data[poff] - 1;
+
+	return tfa987x_write_list(priv, poff + 8, len, true);
+}
+
+/* --- the bring-up sequence ---------------------------------------------- */
+
+static int tfa987x_wait_clks(struct tfa987x_priv *priv)
+{
+	unsigned int clks;
+	int i, ret = -ETIMEDOUT;
+
+	for (i = 0; i < TFA987X_CLK_TRIES; i++) {
+		ret = tfa987x_bf_read(priv, BF_CLKS, &clks);
+		if (ret)
+			return ret;
+		if (clks)
+			return 0;
+		msleep(TFA987X_CLK_POLL_MS);
+	}
+
+	dev_err(priv->dev, "no stable clock after %d ms\n",
+		TFA987X_CLK_TRIES * TFA987X_CLK_POLL_MS);
+	return ret;
+}
+
+/* The part's own sense registers, read before anything is written: they say
+ * whether the supply and temperature blocks answer at all out of reset. */
+static void tfa987x_show_sense(struct tfa987x_priv *priv, const char *when)
+{
+	unsigned int bats = 0, temps = 0, vddps = 0;
+	int ret;
+
+	ret = regmap_read(priv->regmap, 0x15, &bats);
+	if (!ret)
+		ret = regmap_read(priv->regmap, 0x16, &temps);
+	if (!ret)
+		ret = regmap_read(priv->regmap, 0x17, &vddps);
+	if (ret) {
+		dev_err(priv->dev, "sense read failed: %d\n", ret);
+		return;
+	}
+
+	dev_info(priv->dev,
+		 "%s: sense 0x15=0x%04x 0x16=0x%04x 0x17=0x%04x (BATS=%u TEMPS=%u VDDPS=%u)\n",
+		 when, bats, temps, vddps,
+		 bats & 0x3ff, (temps >> 8) & 1, (vddps >> 9) & 0x3ff);
+}
+
+static void tfa987x_show_status(struct tfa987x_priv *priv, const char *when)
+{
+	unsigned int clks = 0, plls = 0, amps = 0, arefs = 0, sws = 0;
+	unsigned int st1 = 0, st2 = 0;
+	int ret;
+
+	ret = regmap_read(priv->regmap, TFA987X_REG_STATUS1, &st1);
+	if (!ret)
+		ret = regmap_read(priv->regmap, TFA987X_REG_STATUS2, &st2);
+	if (ret) {
+		dev_err(priv->dev, "status read failed: %d\n", ret);
+		return;
+	}
+
+	tfa987x_bf_read(priv, BF_CLKS, &clks);
+	tfa987x_bf_read(priv, BF_PLLS, &plls);
+	tfa987x_bf_read(priv, BF_AMPS, &amps);
+	tfa987x_bf_read(priv, BF_AREFS, &arefs);
+	tfa987x_bf_read(priv, BF_SWS, &sws);
+
+	dev_info(priv->dev,
+		 "%s: 0x10=0x%04x 0x11=0x%04x CLKS=%u PLLS=%u AREFS=%u AMPS=%u SWS=%u\n",
+		 when, st1, st2, clks, plls, arefs, amps, sws);
+	dev_info(priv->dev,
+		 "%s: fault bits OTDS/OCDS/UVDS/MANALARM/NOCLK/TDMERR/DCIL/TDMLUTER = %u%u%u%u%u%u%u%u\n",
+		 when,
+		 !!(st1 & BIT(2)), !!(st1 & BIT(3)), !!(st1 & BIT(4)),
+		 !!(st1 & BIT(5)), !!(st1 & BIT(8)), !!(st1 & BIT(10)),
+		 !!(st2 & BIT(0)), !!(st2 & BIT(8)));
+}
+
+/*
+ * The vendor's cold start for a probus part (tfa_dsp_v6.c:4225-4310).  The
+ * state machine fixes the order, and it is not the obvious one: the part is
+ * taken out of powerdown *first* (INIT_CF: MANSCONF, then PWDN=0, then the
+ * wait for system stability), and only then is the container written — the
+ * register file the container programs is the one the part exposes in
+ * INIT_CF/INIT_FW, and the profile's DCDC and protection settings are
+ * shadowed by the powerdown transition when they are written before it.
+ *
+ * The clock-independent half.  INIT_CF writes these before its own stability
+ * wait (tfa_dsp_v6.c:4240-4258).
+ */
+static int tfa987x_power_up(struct tfa987x_priv *priv)
+{
+	int ret;
+
+	ret = tfa987x_bf_write(priv, BF_I2CR, 1);
+	if (ret)
+		return ret;
+	usleep_range(1000, 2000);
+
+	ret = tfa987x_init_part(priv);
+	if (ret) {
+		dev_err(priv->dev, "part init failed: %d\n", ret);
+		return ret;
+	}
+
+	/*
+	 * INIT_CF (tfa_dsp_v6.c:4225-4243): MANSCONF before PWDN, then the
+	 * part leaves wait4srcsettings and starts its clocks.
+	 */
+	ret = tfa987x_bf_write(priv, BF_MANSCONF, 1);
+	if (ret)
+		return ret;
+
+	return tfa987x_bf_write(priv, BF_PWDN, 0);
+}
+
+/* INIT_HW/INIT_CF: the container's device list and profile, plus the two
+ * enables the container's lists leave clear. */
+static int tfa987x_apply_container(struct tfa987x_priv *priv)
+{
+	int ret;
+
+	if (haptic_init) {
+		dev_info(priv->dev, "haptic_init: NXP's container-free sequence\n");
+		ret = tfa987x_write_haptic_regs(priv);
+		if (ret)
+			return ret;
+	} else {
+		ret = tfa987x_write_dev_regs(priv);
+		if (ret) {
+			dev_err(priv->dev, "device list write failed: %d\n", ret);
+			return ret;
+		}
+
+		ret = tfa987x_write_profile(priv, priv->profile);
+		if (ret) {
+			dev_err(priv->dev, "profile %d write failed: %d\n",
+				priv->profile, ret);
+			return ret;
+		}
+	}
+
+	/*
+	 * The container programs the TDM framing but never enables the
+	 * interface: TDME is not in its device list.  NXP's own DSP-less
+	 * bring-up for this part sets it explicitly before the amplifier is
+	 * asked to engage (tfa_haptic.c:193-215); with TDME clear the receiver
+	 * drops the frames and AMPS never leaves 0.
+	 */
+	ret = tfa987x_bf_write(priv, BF_TDME, 1);
+	if (ret)
+		return ret;
+
+	/*
+	 * TDME only enables the interface; the amplifier's input is sink 0, and
+	 * its enable (TDMSPKE, 0x23 bit 0, tfa9873_tfafieldnames.h:109) is a
+	 * separate bit that the container's lists leave clear.
+	 */
+	ret = tfa987x_bf_write(priv, BF_TDMSPKE, 1);
+	if (ret)
+		return ret;
+
+	dev_info(priv->dev, "container applied, profile %d (%s) at %u Hz\n",
+		 priv->profile, cnt_profile_name(priv, priv->profile),
+		 priv->rate);
+
+	return 0;
+}
+
+/*
+ * The start, run from tfa987x_unmute() with the stream already running: power
+ * the part up, wait for the clock that stream provides, then write the
+ * container.  The vendor starts from mute_stream's unmute for the same reason
+ * and retries while the clock is absent (tfa98xx_v6.c:4647-4695); before the
+ * stream exists the container's DCDC/protection words are shadowed.
+ */
+static int tfa987x_start(struct tfa987x_priv *priv)
+{
+	int ret;
+
+	ret = tfa987x_power_up(priv);
+	if (ret)
+		return ret;
+
+	ret = tfa987x_wait_clks(priv);
+	if (ret)
+		return ret;
+
+	return tfa987x_apply_container(priv);
+}
+
+static int tfa987x_unmute(struct tfa987x_priv *priv)
+{
+	unsigned int plls;
+	int ret;
+
+	if (!priv->configured) {
+		ret = tfa987x_start(priv);
+		if (ret)
+			return ret;
+		priv->configured = true;
+	}
+
+	/*
+	 * The alarm bits are sticky and clear when read; clear them before the
+	 * state machine is asked to engage.
+	 */
+	regmap_read(priv->regmap, TFA987X_REG_STATUS1, &plls);
+	regmap_read(priv->regmap, TFA987X_REG_STATUS2, &plls);
+
+	ret = tfa987x_bf_write(priv, BF_MANSCONF, 1);
+	if (ret)
+		return ret;
+
+	ret = tfa987x_bf_read(priv, BF_PLLS, &plls);
+	if (ret)
+		return ret;
+	if (!plls)
+		dev_warn(priv->dev, "PLL not locked at unmute\n");
+
+	ret = tfa987x_bf_write(priv, BF_AMPE, 1);
+	if (ret)
+		return ret;
+
+	/*
+	 * The DCDC needs a moment to start, and its "active" bit is sticky and
+	 * clears on read: sample it once before the log line takes it away.
+	 */
+	msleep(200);
+	tfa987x_show_status(priv, "unmute +200 ms");
+
+	priv->running = true;
+	tfa987x_show_status(priv, "unmute");
+
+	return 0;
+}
+
+static int tfa987x_mute(struct tfa987x_priv *priv)
+{
+	int ret;
+
+	/* Read the amplifier's own state first: this is the last moment the
+	 * device is still running, so it is the record of what the stream did.
+	 */
+	if (priv->running)
+		tfa987x_show_status(priv, "running");
+
+	ret = tfa987x_bf_write(priv, BF_AMPE, 0);
+	if (ret)
+		return ret;
+
+	/*
+	 * The vendor's stop takes the DSP down, and the next unmute starts it
+	 * again (tfa98xx_v6.c:5277-5287); the container is re-applied with the
+	 * next stream's clock.
+	 */
+	priv->configured = false;
+	priv->running = false;
+
+	return 0;
+}
+
+/* --- ASoC ---------------------------------------------------------------- */
+
+static int tfa987x_select_profile(struct tfa987x_priv *priv, unsigned int rate)
+{
+	unsigned int audfs = rate_to_audfs(rate);
+	int i;
+	const char *name;
+
+	if ((int)audfs < 0)
+		return -EINVAL;
+
+	/* Prefer the loudspeaker profile: "speaker" on 0x34, "speakerR" on 0x35. */
+	for (i = 0; (name = cnt_profile_name(priv, i)); i++) {
+		if (strncasecmp(name, "speaker", 7))
+			continue;
+		if (cnt_profile_audfs(priv, i) == audfs)
+			return i;
+	}
+
+	/* Then any profile that carries this rate. */
+	for (i = 0; (name = cnt_profile_name(priv, i)); i++) {
+		if (cnt_profile_audfs(priv, i) == audfs) {
+			dev_warn(priv->dev, "no speaker profile, using '%s'\n",
+				 name);
+			return i;
+		}
+	}
+
+	return -EINVAL;
 }
 
 static int tfa987x_dai_startup(struct snd_pcm_substream *substream,
 			       struct snd_soc_dai *dai)
 {
-	/*
-	 * No DSP container has been loaded, so the amplifier is still in
-	 * standby and would drop whatever I2S data the LPASS sends it.
-	 */
-	dev_warn_once(dai->dev, "playback needs the DSP container; not wired up\n");
+	struct tfa987x_priv *priv = snd_soc_component_get_drvdata(dai->component);
 
-	return -EOPNOTSUPP;
+	if (!priv->fw) {
+		dev_err(dai->dev, "no container: amplifier stays off\n");
+		return -ENODEV;
+	}
+
+	dev_info(dai->dev, "startup, %d profiles\n", cnt_nprofiles(priv));
+
+	return 0;
+}
+
+static int tfa987x_dai_hw_params(struct snd_pcm_substream *substream,
+				 struct snd_pcm_hw_params *params,
+				 struct snd_soc_dai *dai)
+{
+	struct tfa987x_priv *priv = snd_soc_component_get_drvdata(dai->component);
+	unsigned int rate = params_rate(params);
+	int prof;
+
+	dev_info(dai->dev, "hw_params: %u Hz, %u ch, %u-bit\n", rate,
+		 params_channels(params),
+		 snd_pcm_format_width(params_format(params)));
+
+	prof = tfa987x_select_profile(priv, rate);
+	if (prof < 0) {
+		dev_err(dai->dev, "no profile for %u Hz\n", rate);
+		return prof;
+	}
+
+	mutex_lock(&priv->lock);
+	priv->profile = prof;
+	priv->rate = rate;
+	/*
+	 * No register write here: the part has no clock until the DSP's I2S
+	 * endpoint starts, and the container's DCDC/protection words are
+	 * shadowed by powerdown when they are written before it.  The start
+	 * runs from the trigger, with the clock (tfa987x_start()).
+	 */
+	priv->configured = false;
+	mutex_unlock(&priv->lock);
+
+	dev_info(dai->dev, "profile %d (%s) selected for %u Hz, start at unmute\n",
+		 prof, cnt_profile_name(priv, prof), rate);
+
+	return 0;
+}
+
+static int tfa987x_dai_trigger(struct snd_pcm_substream *substream, int cmd,
+			       struct snd_soc_dai *dai)
+{
+	struct tfa987x_priv *priv = snd_soc_component_get_drvdata(dai->component);
+	int ret = 0;
+
+	mutex_lock(&priv->lock);
+
+	switch (cmd) {
+	case SNDRV_PCM_TRIGGER_START:
+	case SNDRV_PCM_TRIGGER_RESUME:
+	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+		ret = tfa987x_unmute(priv);
+		break;
+	case SNDRV_PCM_TRIGGER_STOP:
+	case SNDRV_PCM_TRIGGER_SUSPEND:
+	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
+		ret = tfa987x_mute(priv);
+		break;
+	}
+
+	mutex_unlock(&priv->lock);
+
+	return ret;
+}
+
+static int tfa987x_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
+{
+	/*
+	 * The board's link declares no dai-format, so this is normally not
+	 * called at all; when it is, accept what the container needs: the AP
+	 * is the I2S provider and this amplifier is the consumer (the DT's
+	 * reset-gpio/pinctrl have the MI2S as master).
+	 */
+	switch (fmt & SND_SOC_DAIFMT_FORMAT_MASK) {
+	case SND_SOC_DAIFMT_I2S:
+	case SND_SOC_DAIFMT_DSP_A:
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
 }
 
 static const struct snd_soc_dai_ops tfa987x_dai_ops = {
 	.startup = tfa987x_dai_startup,
+	.hw_params = tfa987x_dai_hw_params,
+	.trigger = tfa987x_dai_trigger,
+	.set_fmt = tfa987x_dai_set_fmt,
 };
 
 static struct snd_soc_dai_driver tfa987x_dai_driver[] = {
@@ -85,13 +991,11 @@ static struct snd_soc_dai_driver tfa987x_dai_driver[] = {
 		.name = "tfa987x-aif",
 		.playback = {
 			.stream_name = "Speaker Playback",
-			.formats = SNDRV_PCM_FMTBIT_S16_LE |
-				   SNDRV_PCM_FMTBIT_S24_LE |
-				   SNDRV_PCM_FMTBIT_S32_LE,
-			.rates = SNDRV_PCM_RATE_8000_192000,
-			.rate_min = 8000,
-			.rate_max = 192000,
-			.channels_min = 1,
+			.formats = SNDRV_PCM_FMTBIT_S32_LE,
+			.rates = SNDRV_PCM_RATE_48000,
+			.rate_min = 48000,
+			.rate_max = 48000,
+			.channels_min = 2,
 			.channels_max = 2,
 		},
 		.ops = &tfa987x_dai_ops,
@@ -101,6 +1005,18 @@ static struct snd_soc_dai_driver tfa987x_dai_driver[] = {
 static const struct snd_soc_component_driver tfa987x_component_driver = {
 	.name = "tfa987x",
 };
+
+/* --- probe --------------------------------------------------------------- */
+
+static int tfa987x_reset(struct device *dev, struct gpio_desc *reset)
+{
+	gpiod_set_value_cansleep(reset, 1);
+	usleep_range(TFA987X_RESET_PULSE_US, TFA987X_RESET_PULSE_US + 1000);
+	gpiod_set_value_cansleep(reset, 0);
+	usleep_range(TFA987X_RESET_PULSE_US, TFA987X_RESET_PULSE_US + 1000);
+
+	return 0;
+}
 
 static int tfa987x_i2c_probe(struct i2c_client *client)
 {
@@ -115,6 +1031,8 @@ static int tfa987x_i2c_probe(struct i2c_client *client)
 		return -ENOMEM;
 
 	priv->dev = dev;
+	priv->addr = client->addr;
+	mutex_init(&priv->lock);
 	i2c_set_clientdata(client, priv);
 
 	priv->regmap = devm_regmap_init_i2c(client, &tfa987x_regmap_config);
@@ -137,16 +1055,45 @@ static int tfa987x_i2c_probe(struct i2c_client *client)
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to read the revision\n");
 
+	priv->rev = rev;
+
+	/* Before any write: does the part's own sense block answer? */
+	mutex_lock(&priv->lock);
+	tfa987x_show_sense(priv, "at probe");
+	mutex_unlock(&priv->lock);
+
 	switch (rev & 0xff) {
 	case TFA9873_ID:
-		dev_info(dev, "TFA9873 revision 0x%04x\n", rev);
+		dev_info(dev, "TFA9873 revision 0x%04x at 0x%02x\n", rev,
+			 priv->addr);
 		break;
 	case TFA9874_ID:
-		dev_info(dev, "TFA9874 revision 0x%04x\n", rev);
+		dev_info(dev, "TFA9874 revision 0x%04x at 0x%02x\n", rev,
+			 priv->addr);
 		break;
 	default:
 		dev_err(dev, "unexpected revision 0x%04x\n", rev);
 		return -ENODEV;
+	}
+
+	priv->profile = -1;
+
+	/* The container is shared by both amplifiers; each keeps its own copy. */
+	ret = request_firmware(&priv->fw, "tfa98xx.cnt", dev);
+	if (ret) {
+		dev_err(dev, "no /lib/firmware/tfa98xx.cnt: %d\n", ret);
+		priv->fw = NULL;
+	} else if (tfa987x_cnt_load(priv)) {
+		dev_err(dev, "container rejected: amplifier stays off\n");
+		release_firmware(priv->fw);
+		priv->fw = NULL;
+	}
+
+	/* Leave the amplifier muted until a stream configures it. */
+	if (priv->fw) {
+		mutex_lock(&priv->lock);
+		tfa987x_mute(priv);
+		mutex_unlock(&priv->lock);
 	}
 
 	return devm_snd_soc_register_component(dev, &tfa987x_component_driver,
@@ -177,5 +1124,5 @@ static struct i2c_driver tfa987x_i2c_driver = {
 };
 module_i2c_driver(tfa987x_i2c_driver);
 
-MODULE_DESCRIPTION("NXP TFA987x speaker amplifier");
+MODULE_DESCRIPTION("NXP TFA987x speaker amplifier, container driven");
 MODULE_LICENSE("GPL");

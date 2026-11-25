@@ -21,6 +21,17 @@ properties:
   '#sound-dai-cells':
     const: 1
 
+  clocks:
+    description:
+      LPASS interface clock of the secondary MI2S, driven by the LPASS PRM
+      (q6prm). The DAI votes its frequency at hw_params; without the vote the
+      DSP's I2S endpoint has no bit clock and never returns a buffer.
+    maxItems: 1
+
+  clock-names:
+    items:
+      - const: sec-mi2s-ibit
+
 required:
   - compatible
   - '#sound-dai-cells'

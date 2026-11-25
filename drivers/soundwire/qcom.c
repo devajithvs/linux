@@ -93,6 +93,9 @@
 #define SWRM_MCP_FRAME_CTRL_BANK_ADDR(m)		(0x101C + 0x40 * (m))
 #define SWRM_MCP_FRAME_CTRL_BANK_COL_CTRL_BMSK			GENMASK(2, 0)
 #define SWRM_MCP_FRAME_CTRL_BANK_ROW_CTRL_BMSK			GENMASK(7, 3)
+#define SWRM_MCP_FRAME_CTRL_BANK_CLK_DIV_BMSK			GENMASK(10, 8)
+#define SWRM_MCP_FRAME_CTRL_BANK_SSP_PERIOD_BMSK		GENMASK(23, 16)
+#define SWRM_FRAME_SYNC_FREQ					4000
 #define SWRM_MCP_BUS_CTRL					0x1044
 #define SWRM_MCP_BUS_CLK_START					BIT(1)
 #define SWRM_MCP_CFG_ADDR					0x1048
@@ -877,17 +880,44 @@ static bool swrm_wait_for_frame_gen_enabled(struct qcom_swrm_ctrl *ctrl)
 	return false;
 }
 
+/*
+ * The v2.0 master programs the row/column fields and the SSP period in the
+ * same frame-control register.  The period is the frame rate divided by the
+ * 4 kHz multi-link sync rate, i.e. (bus clock * 2) / (rows * columns * 4000);
+ * at 9.6 MHz, 50 rows and 16 columns that is 6, and the register takes
+ * period - 1.  The downstream master writes it in both banks; this driver
+ * left the field at its reset value of 0.
+ */
+static u32 qcom_swrm_frame_ctrl(struct qcom_swrm_ctrl *ctrl, u32 val)
+{
+	u32 ssp_period;
+
+	u32p_replace_bits(&val, ctrl->cols_index,
+			  SWRM_MCP_FRAME_CTRL_BANK_COL_CTRL_BMSK);
+	u32p_replace_bits(&val, ctrl->rows_index,
+			  SWRM_MCP_FRAME_CTRL_BANK_ROW_CTRL_BMSK);
+
+	if (ctrl->version >= SWRM_VERSION_2_0_0 &&
+	    ctrl->bus.params.row && ctrl->bus.params.col) {
+		ssp_period = (DEFAULT_CLK_FREQ * 2) /
+			     (ctrl->bus.params.row * ctrl->bus.params.col *
+			      SWRM_FRAME_SYNC_FREQ);
+		if (ssp_period)
+			u32p_replace_bits(&val, ssp_period - 1,
+					  SWRM_MCP_FRAME_CTRL_BANK_SSP_PERIOD_BMSK);
+	}
+
+	return val;
+}
+
 static int qcom_swrm_init(struct qcom_swrm_ctrl *ctrl)
 {
 	u32 val;
 
-	/* Clear Rows and Cols */
-	val = FIELD_PREP(SWRM_MCP_FRAME_CTRL_BANK_ROW_CTRL_BMSK, ctrl->rows_index);
-	val |= FIELD_PREP(SWRM_MCP_FRAME_CTRL_BANK_COL_CTRL_BMSK, ctrl->cols_index);
-
 	reset_control_reset(ctrl->audio_cgcr);
 
-	ctrl->reg_write(ctrl, SWRM_MCP_FRAME_CTRL_BANK_ADDR(0), val);
+	ctrl->reg_write(ctrl, SWRM_MCP_FRAME_CTRL_BANK_ADDR(0),
+			qcom_swrm_frame_ctrl(ctrl, 0));
 
 	/* Enable Auto enumeration */
 	ctrl->reg_write(ctrl, SWRM_ENUMERATOR_CFG_ADDR, 1);
@@ -1009,10 +1039,7 @@ static int qcom_swrm_pre_bank_switch(struct sdw_bus *bus)
 
 	ctrl->reg_read(ctrl, reg, &val);
 
-	u32p_replace_bits(&val, ctrl->cols_index, SWRM_MCP_FRAME_CTRL_BANK_COL_CTRL_BMSK);
-	u32p_replace_bits(&val, ctrl->rows_index, SWRM_MCP_FRAME_CTRL_BANK_ROW_CTRL_BMSK);
-
-	return ctrl->reg_write(ctrl, reg, val);
+	return ctrl->reg_write(ctrl, reg, qcom_swrm_frame_ctrl(ctrl, val));
 }
 
 static int qcom_swrm_port_params(struct sdw_bus *bus,

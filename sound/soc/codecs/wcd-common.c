@@ -103,7 +103,17 @@ int wcd_update_status(struct sdw_slave *slave, enum sdw_slave_status status)
 {
 	struct regmap *regmap = dev_get_regmap(&slave->dev, NULL);
 
-	if (regmap && status == SDW_SLAVE_ATTACHED) {
+	dev_info(&slave->dev, "soundwire status %d\n", status);
+
+	/*
+	 * Leave cache-only for every state but unattached.  An alert is
+	 * serviced by reading the slave's SCP interrupt status over SoundWire
+	 * right after this call, and a cache-only regmap would answer from the
+	 * cache: the alert stays latched, the slave stays in ALERT, and the
+	 * TX slave's ports never stream (the phone's TX slave reads 'Alert'
+	 * from boot while the RX one reads 'Attached').
+	 */
+	if (regmap && status != SDW_SLAVE_UNATTACHED) {
 		/* Write out any cached changes that happened between probe and attach */
 		regcache_cache_only(regmap, false);
 		return regcache_sync(regmap);
@@ -126,15 +136,35 @@ int wcd_interrupt_callback(struct sdw_slave *slave, struct irq_domain *slave_irq
 		unsigned int wcd_intr_status2)
 {
 	struct regmap *regmap = dev_get_regmap(&slave->dev, NULL);
-	u32 sts1, sts2, sts3;
+	u32 sts1 = 0, sts2 = 0, sts3 = 0;
+	int i, ret = 0;
 
-	do {
+	/*
+	 * The SoundWire core acknowledges the slave's interrupt only after this
+	 * callback returns (drivers/soundwire/bus.c: the sdw_write of
+	 * SDW_SCP_INT1 comes after the callback).  An unbounded loop here
+	 * therefore wedges the slave in ALERT for as long as the codec keeps
+	 * reporting a status bit, and every later register access fails.  Bound
+	 * the loop, ignore a failing read, and say what the status was.
+	 */
+	for (i = 0; i < 16; i++) {
 		handle_nested_irq(irq_find_mapping(slave_irq, 0));
-		regmap_read(regmap, wcd_intr_status0, &sts1);
-		regmap_read(regmap, wcd_intr_status1, &sts2);
-		regmap_read(regmap, wcd_intr_status2, &sts3);
+		ret = regmap_read(regmap, wcd_intr_status0, &sts1);
+		if (ret)
+			break;
+		ret = regmap_read(regmap, wcd_intr_status1, &sts2);
+		if (ret)
+			break;
+		ret = regmap_read(regmap, wcd_intr_status2, &sts3);
+		if (ret)
+			break;
+		if (!sts1 && !sts2 && !sts3)
+			return IRQ_HANDLED;
+	}
 
-	} while (sts1 || sts2 || sts3);
+	dev_warn(&slave->dev,
+		 "interrupt status still set after %d passes: %08x %08x %08x (read %d)\n",
+		 i, sts1, sts2, sts3, ret);
 
 	return IRQ_HANDLED;
 }
