@@ -2002,3 +2002,14 @@
 &remoteproc_mpss {
 	status = "okay";
 };
+
+/* IPA: the v5.5 block loads its own firmware through PAS 15 into the
+ * 40 KiB GSI region the phone's stock node names (F0523). The register
+ * windows are the fork's already; only the status and the loader differ.
+ */
+&ipa {
+	status = "okay";
+	qcom,gsi-loader = "self";
+	memory-region = <&ipa_gsi_mem>;
+	firmware-name = "ipa_fws.mdt";
+};
