@@ -1767,8 +1767,8 @@
  * vendor overlay gives MCLK0 24 MHz on TLMM 64, reset on TLMM 15, AVDD2
  * 2.8 V and DVDD2 1.05 V from the AW37004 and I/O from L23B; the slave
  * address is not in that overlay and 0x1a is the address the module's
- * downstream sensor driver lists. Probe-only: no mode table and no PHY
- * mode yet, so the node has no CSI2 endpoint.
+ * downstream sensor driver lists. The sensor drives three C-PHY trios and
+ * the stock programme's mode 1 is 4096x3072 RAW10 at 30 fps (F0508).
  */
 &cci0_i2c0 {
 	imx882: camera@1a {
@@ -1789,6 +1789,15 @@
 		pinctrl-names = "default";
 
 		status = "okay";
+
+		port {
+			imx882_ep: endpoint {
+				bus-type = <1>;		/* MIPI CSI-2 C-PHY */
+				data-lanes = <0 1 2>;
+				link-frequencies = /bits/ 64 <4580566666>;
+				remote-endpoint = <&csiphy0_ep>;
+			};
+		};
 	};
 };
 
@@ -1879,6 +1888,15 @@
 	status = "okay";
 
 	ports {
+		port@0 {
+			reg = <0>;
+			csiphy0_ep: endpoint {
+				bus-type = <1>;		/* MIPI CSI-2 C-PHY */
+				data-lanes = <0 1 2>;
+				remote-endpoint = <&imx882_ep>;
+			};
+		};
+
 		port@1 {
 			csiphy1_ep: endpoint {
 				data-lanes = <0 1 2 3>;
