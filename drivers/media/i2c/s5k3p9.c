@@ -1796,8 +1796,14 @@ static const struct s5k3p9_mode s5k3p9_modes[] = {
 	},
 };
 
+/*
+ * The stock front programme arrives at the VFE as GBRG: F0533's 10-bit render
+ * of the phone's colour-picker screen puts red on R and blue on B only as
+ * GBRG, and the same frame's hand is warm only in that phase.  F0531's BGGR
+ * reading came from an 8-bit montage in a different scene.
+ */
 static const u32 s5k3p9_mbus_codes[] = {
-	MEDIA_BUS_FMT_SGRBG10_1X10,
+	MEDIA_BUS_FMT_SGBRG10_1X10,
 };
 
 struct s5k3p9 {

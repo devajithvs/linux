@@ -88,8 +88,13 @@ static const struct imx882_mode imx882_modes[] = {
 	},
 };
 
+/*
+ * The 4096x3072 programme this driver streams arrives at the VFE as BGGR:
+ * F0531's attended four-phase comparison of the rear main is the evidence,
+ * and F0533's 10-bit sample of the same hand is warm only in the BGGR phase.
+ */
 static const u32 imx882_mbus_codes[] = {
-	MEDIA_BUS_FMT_SGRBG10_1X10,
+	MEDIA_BUS_FMT_SBGGR10_1X10,
 };
 
 struct imx882 {

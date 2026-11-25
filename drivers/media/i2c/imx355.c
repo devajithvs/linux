@@ -33,14 +33,19 @@
 #define IMX355_REG_EXPOSURE		0x0202
 #define IMX355_EXPOSURE_MIN		1
 #define IMX355_EXPOSURE_STEP		1
-#define IMX355_EXPOSURE_DEFAULT		0x0282
+/*
+ * The upstream 0x0282 default leaves a 3264x2448 frame on the 64-code
+ * pedestal (F0507, F0531); these are the values F0531 measured usable on
+ * this module, so a default stream is visible without per-session v4l2-ctl.
+ */
+#define IMX355_EXPOSURE_DEFAULT		2500
 
 /* Analog gain control */
 #define IMX355_REG_ANALOG_GAIN		0x0204
 #define IMX355_ANA_GAIN_MIN		0
 #define IMX355_ANA_GAIN_MAX		960
 #define IMX355_ANA_GAIN_STEP		1
-#define IMX355_ANA_GAIN_DEFAULT		0
+#define IMX355_ANA_GAIN_DEFAULT		300	/* F0531's usable ultrawide gain */
 
 /* Digital gain control */
 #define IMX355_REG_DPGA_USE_GLOBAL_GAIN	0x3070
@@ -48,7 +53,7 @@
 #define IMX355_DGTL_GAIN_MIN		256
 #define IMX355_DGTL_GAIN_MAX		4095
 #define IMX355_DGTL_GAIN_STEP		1
-#define IMX355_DGTL_GAIN_DEFAULT	256
+#define IMX355_DGTL_GAIN_DEFAULT	512	/* F0531's usable ultrawide gain */
 
 /* Test Pattern Control */
 #define IMX355_REG_TEST_PATTERN		0x0600
@@ -1087,7 +1092,10 @@ static u32 imx355_get_format_code(struct imx355 *imx355)
 {
 	/*
 	 * Only one bayer order is supported.
-	 * It depends on the flip settings.
+	 * It depends on the flip settings.  Unflipped the sensor delivers RGGB
+	 * (F0533 read R/G/B back through the raw frame); a horizontal flip swaps
+	 * the red and blue sites, a vertical one swaps the two green sites, and
+	 * both bring BGGR back.
 	 */
 	u32 code;
 	static const u32 codes[2][2] = {
