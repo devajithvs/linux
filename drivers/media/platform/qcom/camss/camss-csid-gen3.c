@@ -66,6 +66,7 @@
 #define		CSI2_RX_CFG0_VC_MODE		3
 #define		CSI2_RX_CFG0_DL0_INPUT_SEL	4
 #define		CSI2_RX_CFG0_PHY_NUM_SEL	20
+#define		CSI2_RX_CFG0_PHY_TYPE_SEL	24	/* 0 = D-PHY, 1 = C-PHY */
 #define		CSI2_RX_CFG0_TPG_MUX_EN		BIT(27)
 #define		CSI2_RX_CFG0_TPG_MUX_SEL	GENMASK(29, 28)
 
@@ -79,8 +80,12 @@
  */
 #define CSID_CSI2_RX_CAPTURE_CTRL	0x208
 #define		CSI2_RX_CAPTURE_CTRL_LONG_PKT_EN	BIT(0)
+#define		CSI2_RX_CAPTURE_CTRL_SHORT_PKT_EN	BIT(1)
+#define		CSI2_RX_CAPTURE_CTRL_CPHY_PKT_EN	BIT(2)
 #define		CSI2_RX_CAPTURE_CTRL_LONG_PKT_DT	GENMASK(9, 4)
 #define		CSI2_RX_CAPTURE_CTRL_LONG_PKT_VC	GENMASK(14, 10)
+#define		CSI2_RX_CAPTURE_CTRL_CPHY_PKT_DT	GENMASK(25, 20)
+#define		CSI2_RX_CAPTURE_CTRL_CPHY_PKT_VC	GENMASK(30, 26)
 
 #define CSID_RDI_CFG0(rdi)	(csid_is_lite(csid) && IS_CSID_690(csid) ?\
 					(0x300 + 0x100 * (rdi)) :\
@@ -125,6 +130,8 @@ static void __csid_configure_rx(struct csid_device *csid,
 	camss = csid->camss;
 	val = (phy->lane_cnt - 1) << CSI2_RX_CFG0_NUM_ACTIVE_LANES;
 	val |= phy->lane_assign << CSI2_RX_CFG0_DL0_INPUT_SEL;
+	if (phy->cphy)
+		val |= BIT(CSI2_RX_CFG0_PHY_TYPE_SEL);
 
 	if (camss->tpg && csid->tpg_linked &&
 	    camss->tpg[phy->csiphy_id].testgen.mode != TPG_PAYLOAD_MODE_DISABLED) {
@@ -244,6 +251,18 @@ static void __csid_configure_rx_capture(struct csid_device *csid, u8 enable,
 		val |= FIELD_PREP(CSI2_RX_CAPTURE_CTRL_LONG_PKT_DT,
 				  format->data_type);
 		val |= FIELD_PREP(CSI2_RX_CAPTURE_CTRL_LONG_PKT_VC, vc);
+
+		/*
+		 * The vendor CSID880 driver also enables the C-PHY packet
+		 * filter, with its own DT/VC fields, whenever the input lane
+		 * type is C-PHY.
+		 */
+		if (csid->phy.cphy) {
+			val |= CSI2_RX_CAPTURE_CTRL_CPHY_PKT_EN;
+			val |= FIELD_PREP(CSI2_RX_CAPTURE_CTRL_CPHY_PKT_DT,
+					  format->data_type);
+			val |= FIELD_PREP(CSI2_RX_CAPTURE_CTRL_CPHY_PKT_VC, vc);
+		}
 	}
 
 	writel(val, csid->base + CSID_CSI2_RX_CAPTURE_CTRL);

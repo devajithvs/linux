@@ -4850,15 +4850,18 @@ static int camss_parse_endpoint_node(struct device *dev,
 		return ret;
 
 	/*
-	 * Most SoCs support both D-PHY and C-PHY standards, but currently only
-	 * D-PHY is supported in the driver.
+	 * The PHY block supports both D-PHY and C-PHY. The endpoint's bus-type
+	 * selects which one the CSIPHY and CSID program; C-PHY counts trios in
+	 * data-lanes.
 	 */
-	if (vep.bus_type != V4L2_MBUS_CSI2_DPHY) {
+	if (vep.bus_type != V4L2_MBUS_CSI2_DPHY &&
+	    vep.bus_type != V4L2_MBUS_CSI2_CPHY) {
 		dev_err(dev, "Unsupported bus type %d\n", vep.bus_type);
 		return -EINVAL;
 	}
 
 	csd->interface.csiphy_id = vep.base.port;
+	csd->interface.cphy = vep.bus_type == V4L2_MBUS_CSI2_CPHY;
 
 	mipi_csi2 = &vep.bus.mipi_csi2;
 	lncfg->clk.pos = mipi_csi2->clock_lane;
@@ -5270,6 +5273,7 @@ static int camss_subdev_notifier_bound(struct v4l2_async_notifier *async,
 	struct csiphy_device *csiphy = &camss->csiphy[id];
 
 	csiphy->cfg.csi2 = &csd->interface.csi2;
+	csiphy->cfg.cphy = csd->interface.cphy;
 	subdev->host_priv = csiphy;
 
 	return 0;
