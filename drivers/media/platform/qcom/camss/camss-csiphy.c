@@ -153,8 +153,20 @@ static int csiphy_set_clock_rates(struct csiphy_device *csiphy)
 		struct camss_clock *clock = &csiphy->clock[i];
 
 		if (csiphy->rate_set[i]) {
-			u64 min_rate = link_freq / 4;
+			u64 min_rate;
 			long round_rate;
+
+			/*
+			 * D-PHY sizes the timer from the byte-clock
+			 * (link_freq / 4). C-PHY carries a symbol per trio;
+			 * the vendor block divides the datarate by 32 for its
+			 * 3-phase clock vote, so the D-PHY divisor rejects a
+			 * valid C-PHY link as too high.
+			 */
+			if (csiphy->cfg.cphy)
+				min_rate = link_freq / 32;
+			else
+				min_rate = link_freq / 4;
 
 			camss_add_clock_margin(&min_rate);
 
