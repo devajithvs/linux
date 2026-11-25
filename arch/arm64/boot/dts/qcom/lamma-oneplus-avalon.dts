@@ -1995,3 +1995,10 @@
  * node - is what keeps the CAMSS probe off the boot (F0366, F0370).
  */
 /* --- end camera bring-up staging --- */
+
+/* MPSS: the modem is the GNSS/QMI LOC engine; its firmware is staged in
+ * /lib/firmware (F0523). auto_boot is false, so rmtfs -s starts it.
+ */
+&remoteproc_mpss {
+	status = "okay";
+};
