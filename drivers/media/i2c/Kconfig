@@ -270,10 +270,9 @@ config VIDEO_IMX882
 	tristate "Sony IMX882 sensor support"
 	help
 	  This is a Video4Linux2 sensor driver for the Sony IMX882 camera
-	  sensor (the OnePlus Nord 4's main camera). No public or extracted
-	  source carries the module's register programme yet, so the driver
-	  is probe-only: it powers the part and reads its chip ID. It cannot
-	  stream until the mode tables and the PHY mode are known.
+	  sensor (the OnePlus Nord 4's main camera). It carries the vendor
+	  stack's own 4096x3072 RAW10 30 fps programme over three C-PHY
+	  trios; no other mode is known.
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called imx882.
