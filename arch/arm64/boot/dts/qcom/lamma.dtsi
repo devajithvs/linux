@@ -165,6 +165,7 @@
 			    "vfe2";
 
 		clocks = <&camcc CAM_CC_CAMNOC_AXI_RT_CLK>,
+			 <&camcc CAM_CC_CAMNOC_AXI_NRT_CLK>,
 			 <&camcc CAM_CC_CPAS_AHB_CLK>,
 			 <&camcc CAM_CC_CPAS_FAST_AHB_CLK>,
 			 <&camcc CAM_CC_CPAS_IFE_0_CLK>,
@@ -191,6 +192,7 @@
 			 <&camcc CAM_CC_IFE_2_CLK>,
 			 <&camcc CAM_CC_IFE_2_FAST_AHB_CLK>;
 		clock-names = "camnoc_axi",
+			      "camnoc_nrt_axi",
 			      "cpas_ahb",
 			      "cpas_fast_ahb",
 			      "cpas_vfe0",
