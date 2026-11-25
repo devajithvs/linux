@@ -3644,6 +3644,101 @@ static const struct camss_subdev_resources vfe_res_sm8650[] = {
 	},
 };
 
+/*
+ * SM7675's VFEs, shared with SM8650's table but for one clock: the camera
+ * CAMNOC AXI NRT branch. With the CCI suspended, opening that branch before
+ * the VFE arms is the one clock state that makes the front S5K3P9 deliver
+ * (F0505, F0506), and the CCI's own copy of the clock is not held once it
+ * autosuspends. Enable it with the VFE's other clocks so the branch is up
+ * before the stream, through the clock framework rather than a register poke.
+ */
+static const struct camss_subdev_resources vfe_res_sm7675[] = {
+	/* VFE0 */
+	{
+		.regulators = { },
+		.clock = { "gcc_axi_hf", "cpas_ahb", "cpas_fast_ahb",
+			   "camnoc_axi", "camnoc_nrt_axi", "vfe0_fast_ahb",
+			   "vfe0", "cpas_vfe0", "qdss_debug_xo",
+		},
+		.clock_rate = {	{ 0 },
+				{ 80000000 },
+				{ 300000000, 400000000 },
+				{ 300000000, 400000000 },
+				{ 0 },
+				{ 0 },
+				{ 466000000, 594000000, 675000000, 785000000 },
+				{ 0 },
+				{ 0 },
+		},
+		.reg = { "vfe0" },
+		.interrupt = { "vfe0" },
+		.vfe = {
+			.line_num = 3,
+			.has_pd = true,
+			.pd_name = "ife0",
+			.hw_ops = &vfe_ops_gen3,
+			.formats_rdi = &vfe_formats_rdi_845,
+			.formats_pix = &vfe_formats_pix_845
+		},
+	},
+	/* VFE1 */
+	{
+		.regulators = { },
+		.clock = { "gcc_axi_hf", "cpas_ahb", "cpas_fast_ahb",
+			   "camnoc_axi", "camnoc_nrt_axi", "vfe1_fast_ahb",
+			   "vfe1", "cpas_vfe1", "qdss_debug_xo",
+		},
+		.clock_rate = {	{ 0 },
+				{ 80000000 },
+				{ 300000000, 400000000 },
+				{ 300000000, 400000000 },
+				{ 0 },
+				{ 0 },
+				{ 466000000, 594000000, 675000000, 785000000 },
+				{ 0 },
+				{ 0 },
+		},
+		.reg = { "vfe1" },
+		.interrupt = { "vfe1" },
+		.vfe = {
+			.line_num = 3,
+			.has_pd = true,
+			.pd_name = "ife1",
+			.hw_ops = &vfe_ops_gen3,
+			.formats_rdi = &vfe_formats_rdi_845,
+			.formats_pix = &vfe_formats_pix_845
+		},
+	},
+	/* VFE2 */
+	{
+		.regulators = { },
+		.clock = { "gcc_axi_hf", "cpas_ahb", "cpas_fast_ahb",
+			   "camnoc_axi", "camnoc_nrt_axi", "vfe2_fast_ahb",
+			   "vfe2", "cpas_vfe2", "qdss_debug_xo",
+		},
+		.clock_rate = { { 0 },
+				{ 80000000 },
+				{ 300000000, 400000000 },
+				{ 300000000, 400000000 },
+				{ 0 },
+				{ 0 },
+				{ 466000000, 594000000, 675000000, 785000000 },
+				{ 0 },
+				{ 0 },
+		},
+		.reg = { "vfe2" },
+		.interrupt = { "vfe2" },
+		.vfe = {
+			.line_num = 3,
+			.has_pd = true,
+			.pd_name = "ife2",
+			.hw_ops = &vfe_ops_gen3,
+			.formats_rdi = &vfe_formats_rdi_845,
+			.formats_pix = &vfe_formats_pix_845
+		},
+	},
+};
+
 static const struct resources_icc icc_res_sm8650[] = {
 	{
 		.name = "ahb",
@@ -4755,15 +4850,18 @@ static int camss_parse_endpoint_node(struct device *dev,
 		return ret;
 
 	/*
-	 * Most SoCs support both D-PHY and C-PHY standards, but currently only
-	 * D-PHY is supported in the driver.
+	 * The PHY block supports both D-PHY and C-PHY. The endpoint's bus-type
+	 * selects which one the CSIPHY and CSID program; C-PHY counts trios in
+	 * data-lanes.
 	 */
-	if (vep.bus_type != V4L2_MBUS_CSI2_DPHY) {
+	if (vep.bus_type != V4L2_MBUS_CSI2_DPHY &&
+	    vep.bus_type != V4L2_MBUS_CSI2_CPHY) {
 		dev_err(dev, "Unsupported bus type %d\n", vep.bus_type);
 		return -EINVAL;
 	}
 
 	csd->interface.csiphy_id = vep.base.port;
+	csd->interface.cphy = vep.bus_type == V4L2_MBUS_CSI2_CPHY;
 
 	mipi_csi2 = &vep.bus.mipi_csi2;
 	lncfg->clk.pos = mipi_csi2->clock_lane;
@@ -5175,6 +5273,7 @@ static int camss_subdev_notifier_bound(struct v4l2_async_notifier *async,
 	struct csiphy_device *csiphy = &camss->csiphy[id];
 
 	csiphy->cfg.csi2 = &csd->interface.csi2;
+	csiphy->cfg.cphy = csd->interface.cphy;
 	subdev->host_priv = csiphy;
 
 	return 0;
@@ -5352,11 +5451,29 @@ static void camss_genpd_cleanup(struct camss *camss)
  *
  * Return 0 on success or a negative error code on failure
  */
+/*
+ * Bring-up gate. The CAMSS probe is the one access on this SoC that has killed
+ * the phone twice (F0366 at initcall time, F0370 through udev): the first
+ * camera-silicon read happens inside the sub-device probes, and a block whose
+ * clock or CAMCC power domain is not actually up stalls the interconnect. With
+ * the gate closed the driver declines the device before touching anything, so
+ * the boot is the daily's; the operator opens it and binds the device to make
+ * the probe run with the console up and its output in pstore's console zone.
+ */
+static bool bringup_gate;
+module_param(bringup_gate, bool, 0644);
+MODULE_PARM_DESC(bringup_gate, "0: decline the device before any register access; 1: probe");
+
 static int camss_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct camss *camss;
 	int ret;
+
+	if (!bringup_gate) {
+		dev_info(dev, "bringup_gate closed; not probing (set qcom_camss.bringup_gate=1 and bind)\n");
+		return -ENODEV;
+	}
 
 	camss = devm_kzalloc(dev, sizeof(*camss), GFP_KERNEL);
 	if (!camss)
@@ -5723,6 +5840,28 @@ static const struct camss_resources sm8650_resources = {
 	.vfe_num = ARRAY_SIZE(vfe_res_sm8650),
 };
 
+/*
+ * SM7675 carries five CSIPHY, three full CSID/VFE and two lite CSID/VFE
+ * blocks, whose registers are the SM8650 gen3 ones. Only the full-size
+ * windows and the five PHYs are described: the vendor's lite CSID and lite
+ * VFE windows start at the same address (0xaccb000 and 0xacd0000), which the
+ * mainline subdevice mapping cannot request twice, and the first camera path
+ * does not use them.
+ */
+static const struct camss_resources sm7675_resources = {
+	.version = CAMSS_8650,
+	.pd_name = "top",
+	.csiphy_res = csiphy_res_sm8650,
+	.csid_res = csid_res_sm8650,
+	.csid_wrapper_res = &csid_wrapper_res_sm8550,
+	.vfe_res = vfe_res_sm7675,
+	.icc_res = icc_res_sm8650,
+	.icc_path_num = ARRAY_SIZE(icc_res_sm8650),
+	.csiphy_num = 5,
+	.csid_num = 3,
+	.vfe_num = 3,
+};
+
 static const struct camss_resources x1e80100_resources = {
 	.version = CAMSS_X1E80100,
 	.pd_name = "top",
@@ -5754,6 +5893,7 @@ static const struct of_device_id camss_dt_match[] = {
 	{ .compatible = "qcom,sdm845-camss", .data = &sdm845_resources },
 	{ .compatible = "qcom,sm6150-camss", .data = &sm6150_resources },
 	{ .compatible = "qcom,sm6350-camss", .data = &sm6350_resources },
+	{ .compatible = "qcom,sm7675-camss", .data = &sm7675_resources },
 	{ .compatible = "qcom,sm8250-camss", .data = &sm8250_resources },
 	{ .compatible = "qcom,sm8550-camss", .data = &sm8550_resources },
 	{ .compatible = "qcom,sm8650-camss", .data = &sm8650_resources },

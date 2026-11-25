@@ -153,8 +153,20 @@ static int csiphy_set_clock_rates(struct csiphy_device *csiphy)
 		struct camss_clock *clock = &csiphy->clock[i];
 
 		if (csiphy->rate_set[i]) {
-			u64 min_rate = link_freq / 4;
+			u64 min_rate;
 			long round_rate;
+
+			/*
+			 * D-PHY sizes the timer from the byte-clock
+			 * (link_freq / 4). C-PHY carries a symbol per trio;
+			 * the vendor block divides the datarate by 32 for its
+			 * 3-phase clock vote, so the D-PHY divisor rejects a
+			 * valid C-PHY link as too high.
+			 */
+			if (csiphy->cfg.cphy)
+				min_rate = link_freq / 32;
+			else
+				min_rate = link_freq / 4;
 
 			camss_add_clock_margin(&min_rate);
 
@@ -265,12 +277,26 @@ static int csiphy_set_power(struct v4l2_subdev *sd, int on)
 static int csiphy_stream_on(struct csiphy_device *csiphy)
 {
 	struct csiphy_config *cfg = &csiphy->cfg;
+	struct csiphy_lanes_cfg *lane_cfg = &cfg->csi2->lane_cfg;
 	s64 link_freq;
-	u8 lane_mask = csiphy->res->hw_ops->get_lane_mask(&cfg->csi2->lane_cfg);
+	u8 lane_mask = 0;
 	u8 bpp = csiphy_get_bpp(csiphy->res->formats->formats, csiphy->res->formats->nformats,
 				csiphy->fmt[MSM_CSIPHY_PAD_SINK].code);
 	u8 num_lanes = csiphy->cfg.csi2->lane_cfg.num_data;
 	u8 val;
+	int i;
+
+	/*
+	 * D-PHY selects lanes by position; C-PHY enables whole trios, whose
+	 * lane-enable bits sit at odd positions of the same field (stock
+	 * 0x1014 = 0x2a for trios 0, 1, 2).
+	 */
+	if (cfg->cphy) {
+		for (i = 0; i < lane_cfg->num_data; i++)
+			lane_mask |= BIT(lane_cfg->data[i].pos * 2 + 1);
+	} else {
+		lane_mask = csiphy->res->hw_ops->get_lane_mask(lane_cfg);
+	}
 
 	link_freq = camss_get_link_freq(&csiphy->subdev.entity, bpp, num_lanes);
 
